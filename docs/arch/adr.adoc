@@ -1,0 +1,558 @@
+
+= Foundation Review: Architecture Decision Records
+:toc:
+:toclevels: 3
+:sectnums:
+:icons: font
+:source-highlighter: rouge
+:revnumber: 0.1
+:revdate: 2026-11-16
+
+== Purpose
+
+This document records significant architectural decisions
+for `foundation-review.nvim`.
+
+Each Architecture Decision Record (ADR) describes:
+
+* Context and problem.
+* Decision.
+* Rationale.
+* Consequences.
+* Decision status.
+
+Decisions are retained for historical traceability.
+
+Superseded decisions shall not be deleted.
+
+== Decision Register
+
+[cols="1,4,2",options="header"]
+|===
+|ADR |Decision |Status
+
+|001
+|Use native macOS `fm` instead of custom Swift
+|Proposed
+
+|002
+|Implement the plugin entirely in Lua
+|Accepted
+
+|003
+|Use asynchronous CLI process execution
+|Accepted
+
+|004
+|Use structured JSON generation
+|Proposed
+
+|005
+|Use Neovim quickfix for findings
+|Accepted
+
+|006
+|Restrict activation by filetype
+|Accepted
+
+|007
+|Maintain non-destructive operation
+|Accepted
+
+|008
+|Use deterministic source-location validation
+|Accepted
+
+|009
+|Use the on-device model exclusively
+|Accepted
+
+|010
+|Use format-aware document segmentation
+|Accepted
+
+|011
+|Retain buffer snapshot consistency
+|Accepted
+
+|012
+|Avoid implementing a language server
+|Accepted
+
+|013
+|Keep inference integration behind an adapter
+|Accepted
+|===
+
+== ADR-001: Native macOS fm Integration
+
+Status:: Proposed
+Date:: 2026-11-16
+Supersedes:: Previous Swift helper design
+
+=== Context
+
+The original architecture required a custom Swift
+command-line application to access Apple's Foundation
+Models framework.
+
+macOS 27 introduces the native `fm` command-line utility,
+providing direct access to the on-device model.
+
+The utility supports prompt execution and structured
+generation without requiring a custom Swift application.
+
+=== Decision
+
+Replace the proposed Swift helper with direct invocation
+of the native `fm` CLI.
+
+The plugin shall use the `respond` command for inference.
+
+=== Rationale
+
+* Removes a compiled application component.
+* Eliminates Swift build and packaging requirements.
+* Reduces implementation and maintenance complexity.
+* Uses a native operating-system capability.
+* Simplifies installation and distribution.
+* Retains local inference and structured output.
+
+=== Consequences
+
+Positive::
+
+* Smaller codebase.
+* Simpler installation.
+* No Swift toolchain dependency.
+* No custom binary distribution.
+* Fewer integration boundaries.
+
+Negative::
+
+* Depends on macOS-specific CLI behaviour.
+* CLI options may change between releases.
+* Less control than direct framework integration.
+* Schema support must be verified.
+* Process startup overhead may affect performance.
+
+=== Validation
+
+Before acceptance:
+
+. Verify the installed CLI version and capabilities.
+. Confirm model availability.
+. Confirm structured JSON output.
+. Verify stdin-based document submission.
+. Review applicable Apple CLI terms.
+. Benchmark representative document reviews.
+
+If these tests fail, reconsider a native framework
+adapter without changing the Lua plugin architecture.
+
+== ADR-002: Lua-Only Plugin Implementation
+
+Status:: Accepted
+Date:: 2026-11-16
+
+=== Context
+
+Neovim provides native Lua APIs for buffer management,
+process execution, configuration and quickfix navigation.
+
+The `fm` CLI removes the requirement for custom native
+framework bindings.
+
+=== Decision
+
+Implement all project-specific application logic in Lua.
+
+=== Rationale
+
+* Native Neovim integration.
+* Minimal dependencies.
+* Straightforward maintenance.
+* Familiar plugin architecture.
+* No additional runtime language.
+
+=== Consequences
+
+The plugin shall remain macOS-specific for inference,
+although its document-handling modules may be portable.
+
+== ADR-003: Asynchronous CLI Execution
+
+Status:: Accepted
+Date:: 2026-11-16
+
+=== Context
+
+Model inference may require several seconds or longer.
+
+Synchronous execution would block Neovim's interface.
+
+=== Decision
+
+Invoke `fm` asynchronously using `vim.system()`.
+
+Pass document text through stdin.
+
+Capture stdout and stderr independently.
+
+=== Rationale
+
+* Keeps Neovim responsive.
+* Supports cancellation and timeouts.
+* Avoids temporary document files.
+* Requires no persistent service.
+
+=== Consequences
+
+The controller must manage process handles, callbacks,
+request state and cancellation.
+
+== ADR-004: Structured JSON Generation
+
+Status:: Proposed
+Date:: 2026-11-16
+
+=== Context
+
+Free-form model responses are difficult to convert
+reliably into editor diagnostics.
+
+The `fm` CLI supports schema-guided generation.
+
+=== Decision
+
+Use structured JSON output with a versioned findings schema.
+
+=== Rationale
+
+* Predictable response structure.
+* Simplified Lua parsing.
+* Easier validation.
+* Improved testability.
+* Clear separation of model output and presentation.
+
+=== Consequences
+
+The schema must conform to the installed CLI's
+supported generation-schema format.
+
+Version-specific requirements shall be isolated in
+the schema integration module.
+
+== ADR-005: Native Quickfix Presentation
+
+Status:: Accepted
+Date:: 2026-11-16
+
+=== Context
+
+Neovim already provides a mature mechanism for navigating
+source-location-based findings.
+
+=== Decision
+
+Use the native quickfix list as the primary interface.
+
+=== Rationale
+
+* No additional UI dependencies.
+* Familiar navigation.
+* Supports line and column positions.
+* Works with existing Neovim commands.
+* Avoids creating a separate review interface.
+
+=== Consequences
+
+Findings must have validated source coordinates before
+being presented as navigable quickfix entries.
+
+== ADR-006: Explicit Filetype Allowlist
+
+Status:: Accepted
+Date:: 2026-11-16
+
+=== Context
+
+The reviewer targets prose and markup documents rather
+than arbitrary source code.
+
+=== Decision
+
+Activate only for configured Neovim filetypes.
+
+=== Rationale
+
+* Prevents inappropriate reviews.
+* Avoids accidental inference on source code.
+* Allows format-specific instructions.
+* Mirrors familiar Neovim configuration conventions.
+
+=== Consequences
+
+Users must explicitly enable additional filetypes.
+
+== ADR-007: Non-Destructive Review
+
+Status:: Accepted
+Date:: 2026-11-16
+
+=== Context
+
+Generative models may suggest inappropriate corrections
+or changes to technical meaning.
+
+=== Decision
+
+The plugin shall never modify source buffers automatically.
+
+=== Rationale
+
+* Preserves authorial control.
+* Prevents accidental document corruption.
+* Simplifies the initial implementation.
+* Avoids complex edit reconciliation.
+
+=== Consequences
+
+The author applies corrections manually.
+
+Selective correction application may be considered
+in a later release.
+
+== ADR-008: Deterministic Source Validation
+
+Status:: Accepted
+Date:: 2026-11-16
+
+=== Context
+
+Language models may produce incorrect line numbers,
+columns or text offsets.
+
+Markup and Unicode increase this risk.
+
+=== Decision
+
+Use the model to identify issues and offending text.
+
+Use Lua to validate and locate those findings in the
+original buffer snapshot.
+
+=== Rationale
+
+* Prevents fabricated source positions.
+* Supports accurate quickfix navigation.
+* Handles Unicode through explicit byte-offset conversion.
+* Separates probabilistic inference from deterministic logic.
+
+=== Consequences
+
+Ambiguous or unverifiable findings may not receive
+navigable quickfix entries.
+
+The plugin shall report such limitations rather than
+invent coordinates.
+
+== ADR-009: On-Device Inference Only
+
+Status:: Accepted
+Date:: 2026-11-16
+
+=== Context
+
+Document review may involve private or unpublished material.
+
+The `fm` CLI may expose multiple model execution options
+depending on the macOS version.
+
+=== Decision
+
+Use the on-device system model exclusively.
+
+Do not permit automatic cloud fallback.
+
+=== Rationale
+
+* Maintains local document processing.
+* Avoids external API credentials.
+* Supports offline operation.
+* Provides predictable privacy boundaries.
+
+=== Consequences
+
+Review quality and context capacity are limited by the
+available on-device model.
+
+Model unavailability shall cause a visible failure.
+
+== ADR-010: Format-Aware Segmentation
+
+Status:: Accepted
+Date:: 2026-11-16
+
+=== Context
+
+Documents may exceed the model's context capacity.
+
+Markup documents also contain structural elements that
+should not be treated as ordinary prose.
+
+=== Decision
+
+Implement document segmentation using configurable
+filetype adapters.
+
+=== Rationale
+
+* Supports long documents.
+* Protects markup syntax.
+* Preserves source locations.
+* Allows future format-specific improvements.
+
+=== Consequences
+
+Segmentation and source mapping require dedicated tests.
+
+The initial implementation shall prioritise correctness
+over sophisticated parsing.
+
+== ADR-011: Buffer Snapshot Consistency
+
+Status:: Accepted
+Date:: 2026-11-16
+
+=== Context
+
+The author may continue editing while a review is running.
+
+Findings generated against an earlier document state
+may become invalid.
+
+=== Decision
+
+Capture the buffer changedtick and source snapshot when
+a review begins.
+
+Discard results if the buffer changes before publication.
+
+=== Rationale
+
+* Prevents stale diagnostics.
+* Protects source-location accuracy.
+* Avoids misleading quickfix navigation.
+
+=== Consequences
+
+The author may need to repeat a review after editing.
+
+Incremental reconciliation is deferred.
+
+== ADR-012: No Custom Language Server
+
+Status:: Accepted
+Date:: 2026-11-16
+
+=== Context
+
+The plugin resembles a language diagnostic tool but does
+not require continuous document analysis.
+
+Neovim already provides the necessary APIs.
+
+=== Decision
+
+Do not implement the Language Server Protocol.
+
+=== Rationale
+
+* Avoids unnecessary infrastructure.
+* Simplifies implementation.
+* Preserves manual review semantics.
+* Allows direct quickfix integration.
+
+=== Consequences
+
+The plugin shall not expose itself as an LSP server.
+
+Optional diagnostics integration may be added later
+without implementing the LSP protocol.
+
+== ADR-013: Isolated Inference Adapter
+
+Status:: Accepted
+Date:: 2026-11-16
+
+=== Context
+
+The initial implementation uses Apple's `fm` CLI.
+
+The CLI may evolve, and direct framework integration
+could become necessary if a required capability is absent.
+
+=== Decision
+
+Isolate inference execution behind a Lua adapter.
+
+The review controller shall not depend directly on
+CLI argument construction or output formatting.
+
+=== Rationale
+
+* Contains platform-specific behaviour.
+* Simplifies testing through mock responses.
+* Supports CLI compatibility changes.
+* Avoids coupling document logic to inference transport.
+
+=== Consequences
+
+The adapter introduces a small abstraction boundary.
+
+Alternative inference backends remain outside the
+initial project scope.
+
+== Decision Governance
+
+=== Decision Lifecycle
+
+Each ADR may have one of these states:
+
+* Proposed
+* Accepted
+* Superseded
+* Rejected
+* Deprecated
+
+=== Change Procedure
+
+A material architectural change shall:
+
+. Identify the affected decision.
+. Document the new context.
+. Describe alternatives considered.
+. Record the selected approach.
+. Explain consequences.
+. Update the decision register.
+. Update affected design documentation.
+
+Accepted decisions shall not be silently rewritten.
+
+A superseding ADR shall reference the earlier decision.
+
+== Outstanding Decisions
+
+The following matters remain subject to feasibility testing:
+
+* Exact structured-output schema representation.
+* Schema generation versus packaged schema files.
+* Maximum practical document chunk size.
+* Whether repeated CLI invocations create unacceptable latency.
+* Handling of findings with ambiguous source locations.
+* Appropriate performance and quality benchmarks.
+* Compatibility requirements across macOS 27 releases.
+* Licensing implications for public plugin distribution.
+
+These shall be resolved before the first public release.

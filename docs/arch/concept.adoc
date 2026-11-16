@@ -1,0 +1,403 @@
+
+= Foundation Review: Concept Guide
+:toc:
+:toclevels: 3
+:sectnums:
+:icons: font
+:source-highlighter: rouge
+:revnumber: 0.2
+:revdate: 2026-11-16
+
+== Executive Summary
+
+*Foundation Review* (`foundation-review.nvim`) is a
+lightweight Neovim plugin providing AI-assisted editorial
+review of text and markup documents using Apple's on-device
+Foundation Models.
+
+The plugin invokes the native macOS `fm` command-line utility
+and presents actionable findings through Neovim's quickfix
+list.
+
+It requires no custom Swift application, external inference
+server, cloud API, or API credentials.
+
+The plugin is intended to complement existing spelling and
+grammar tools, particularly Harper LSP, by identifying
+contextual editorial issues that deterministic language
+checkers may overlook.
+
+== Problem Statement
+
+Traditional spelling and grammar tools are effective at
+detecting mechanical language errors but are less capable
+of assessing:
+
+* Ambiguous or unclear wording.
+* Awkward sentence construction.
+* Unnecessary repetition.
+* Inconsistent terminology.
+* Problems with readability and expression.
+* Context-dependent grammatical issues.
+
+General-purpose AI assistants provide these capabilities
+but frequently introduce unnecessary infrastructure,
+provider configuration, conversational interfaces, and
+potential privacy concerns.
+
+A purpose-built Neovim plugin can deliver contextual
+editorial review without disrupting the author's workflow.
+
+== Vision
+
+Provide a local, unobtrusive editorial reviewer that works
+with Neovim's existing editing and navigation facilities.
+
+The author invokes a review, examines findings, and decides
+whether to make corrections.
+
+The reviewer advises; the author retains control.
+
+== Objectives
+
+The project shall:
+
+. Integrate natively with Neovim using Lua.
+. Use Apple's on-device Foundation Models through `fm`.
+. Operate without network connectivity.
+. Support text and markup document formats.
+. Restrict operation to configured Neovim filetypes.
+. Analyse unsaved buffer contents.
+. Support complete-buffer and visual-selection reviews.
+. Use British English by default.
+. Return structured editorial findings.
+. Present findings through the native quickfix list.
+. Preserve accurate source locations.
+. Execute asynchronously.
+. Never modify document contents automatically.
+. Require minimal installation and configuration.
+
+== Scope
+
+=== In Scope
+
+The initial implementation will support:
+
+* Spelling and word-choice suggestions.
+* Grammar and punctuation review.
+* Sentence clarity and readability.
+* Identification of ambiguity and repetition.
+* Terminology and stylistic consistency.
+* Configurable editorial review categories.
+* Filetype-specific review instructions.
+* Document segmentation for model context limits.
+* Quickfix navigation.
+* Review cancellation.
+* Health and availability checks.
+
+=== Out of Scope
+
+The initial release will not include:
+
+* Automatic document rewriting.
+* Automatic application of suggested corrections.
+* Cloud inference.
+* Alternative LLM providers.
+* Ollama integration.
+* A conversational interface.
+* Continuous inference while typing.
+* A custom Language Server Protocol implementation.
+* Retrieval-augmented generation.
+* External fact-checking.
+* Document rendering or publishing.
+
+== Target Environment
+
+[cols="1,3",options="header"]
+|===
+|Component |Requirement
+
+|Operating system
+|macOS 27 or later with compatible `fm` CLI
+
+|Hardware
+|Apple Intelligence-compatible Apple Silicon
+
+|Editor
+|Neovim 0.12 or later
+
+|Plugin language
+|Lua
+
+|Inference interface
+|Native macOS `fm` CLI
+
+|Inference model
+|Apple on-device system model
+
+|Presentation
+|Neovim quickfix list
+
+|Runtime dependencies
+|Neovim, macOS `fm`, available system model
+
+|Network dependency
+|None for on-device inference
+|===
+
+The plugin shall explicitly select or verify the on-device
+model and shall not silently fall back to cloud inference.
+
+Model availability and applicable Apple software terms
+must be checked before operation.
+
+== User Experience
+
+=== Normal Workflow
+
+. Open a supported document in Neovim.
+. Execute `:FoundationReview`.
+. The plugin captures the current buffer contents.
+. The document is divided into reviewable sections.
+. Each section is submitted to `fm`.
+. Structured findings are validated and consolidated.
+. The quickfix list is populated and opened.
+. The author navigates through the findings.
+. Corrections are made manually.
+
+=== Proposed Commands
+
+[cols="2,3",options="header"]
+|===
+|Command |Purpose
+
+|`:FoundationReview`
+|Review the current buffer.
+
+|`:FoundationReviewSelection`
+|Review a selected range.
+
+|`:FoundationReviewCancel`
+|Cancel the active review.
+
+|`:FoundationReviewHealth`
+|Check CLI availability, configuration and model status.
+|===
+
+The command names constitute the proposed public API.
+
+=== Example Quickfix Output
+
+[source,text]
+----
+article.adoc|24 col 18| W: Grammar: "it's" -> "its"
+article.adoc|47 col 1| I: Clarity: Split long sentence
+article.adoc|83 col 12| W: Spelling: "organize" -> "organise"
+----
+
+Severity classifications:
+
+* `E` — High-confidence mechanical error.
+* `W` — Likely issue requiring attention.
+* `I` — Editorial suggestion.
+
+Severity reflects the nature of the finding, not a
+statistically calibrated model confidence score.
+
+== Filetype Configuration
+
+The plugin shall use Neovim's filetype mechanism to
+determine eligibility.
+
+Example:
+
+[source,lua]
+----
+require("foundation-review").setup({
+  language = "en-GB",
+
+  filetypes = {
+    asciidoc = true,
+    markdown = true,
+    text = true,
+    typst = true,
+    gitcommit = true,
+  },
+
+  checks = {
+    spelling = true,
+    grammar = true,
+    punctuation = true,
+    clarity = true,
+    consistency = true,
+  },
+
+  quickfix = {
+    auto_open = true,
+  },
+
+  keymaps = {
+    review = "<leader>ar",
+  },
+})
+----
+
+The filetype list is an allowlist.
+
+Unsupported filetypes shall not be reviewed by default.
+
+=== Format Awareness
+
+Filetype-specific adapters shall identify prose and
+protect non-prose content.
+
+Examples include:
+
+* AsciiDoc attributes and source blocks.
+* Markdown fenced code and frontmatter.
+* Typst expressions and code.
+* Git commit metadata.
+* URLs, references and document directives.
+
+The plugin shall not assume that all text in a buffer
+is natural-language prose.
+
+== Review Principles
+
+=== Non-Destructive Operation
+
+The reviewer shall never modify the buffer automatically.
+
+All findings remain advisory.
+
+=== Authorial Voice
+
+The model shall be instructed to preserve the author's
+meaning, tone, terminology and intended style.
+
+Unnecessary rewriting shall be discouraged.
+
+=== Local Privacy
+
+Document content shall be processed by the on-device
+model only.
+
+No cloud fallback shall be permitted.
+
+No document contents shall be written to diagnostic
+logs by default.
+
+=== Complementary Language Tools
+
+Foundation Review complements Harper LSP and similar
+language tools.
+
+Harper provides continuous deterministic diagnostics.
+
+Foundation Review provides deliberate contextual analysis.
+
+=== Manual Invocation
+
+Review shall occur only following an explicit command.
+
+No model inference shall be triggered automatically
+by ordinary editing, buffer changes or saves.
+
+== Conceptual Workflow
+
+[plantuml,foundation-review-concept,svg]
+----
+@startuml
+skinparam monochrome true
+skinparam shadowing false
+
+start
+:Open document;
+
+if (Configured filetype?) then (Yes)
+  :Invoke review;
+  :Capture buffer snapshot;
+  :Segment document;
+  :Invoke local fm CLI;
+  :Validate structured findings;
+  :Populate quickfix list;
+  :Navigate findings;
+
+  if (Correction appropriate?) then (Yes)
+    :Edit document manually;
+  else (No)
+    :Ignore suggestion;
+  endif
+else (No)
+  :Report unsupported filetype;
+endif
+
+stop
+@enduml
+----
+
+== Non-Functional Requirements
+
+=== Performance
+
+* Neovim shall remain responsive during review.
+* Model execution shall be asynchronous.
+* Large documents shall be segmented.
+* Review cancellation shall be supported.
+* Excessive concurrent model requests shall be avoided.
+
+=== Reliability
+
+* Invalid model output shall not crash Neovim.
+* Invalid source locations shall be rejected.
+* Results shall be checked against the buffer snapshot.
+* Model unavailability shall produce actionable errors.
+* Partial review failures shall be reported.
+* No findings shall be silently fabricated or discarded.
+
+=== Security
+
+* The plugin shall invoke a known local executable.
+* Shell command interpolation shall be avoided.
+* Document text shall be treated as untrusted input.
+* Model output shall never be executed as code.
+* No document text shall be sent to cloud services.
+* No persistent plaintext temporary files shall be required.
+
+=== Maintainability
+
+* The implementation shall remain Lua-first.
+* Neovim-native APIs shall be preferred.
+* The `fm` invocation shall be isolated in one module.
+* Filetype adapters shall be independently testable.
+* Third-party runtime dependencies shall be minimised.
+
+== Success Criteria
+
+The proof of concept succeeds when:
+
+. `fm` availability can be verified.
+. The on-device model can review a short document.
+. Structured findings can be parsed reliably.
+. A supported Neovim buffer can be reviewed.
+. Unsaved changes are included in the review.
+. Findings appear in the quickfix list.
+. Navigation reaches the correct source locations.
+. Unsupported filetypes are rejected.
+. No document content is modified automatically.
+. The workflow functions without network connectivity.
+
+== Future Enhancements
+
+Potential later capabilities include:
+
+* Review profiles for different writing styles.
+* Project-specific terminology dictionaries.
+* Optional inline diagnostics.
+* Selective correction application.
+* Incremental review of changed sections.
+* Review of multiple buffers.
+* Configurable severity thresholds.
+* Exportable editorial reports.
+
+These are not requirements for the initial release.

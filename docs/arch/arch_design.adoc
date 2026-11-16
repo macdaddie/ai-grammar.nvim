@@ -1,0 +1,869 @@
+
+= Foundation Review: Architecture and Design Guide
+:toc:
+:toclevels: 4
+:sectnums:
+:icons: font
+:source-highlighter: rouge
+:revnumber: 0.2
+:revdate: 2026-11-16
+
+== Architecture Overview
+
+Foundation Review is a Lua-based Neovim plugin that invokes
+the native macOS `fm` CLI to analyse text and markup documents.
+
+The solution comprises three logical layers:
+
+. Neovim integration and presentation.
+. Document preparation and review orchestration.
+. Native Apple Foundation Models inference.
+
+All application-specific logic resides in Lua.
+
+No custom Swift executable, HTTP server, or persistent
+inference service is required.
+
+== Architectural Principles
+
+* Prefer native platform capabilities.
+* Minimise dependencies and operational complexity.
+* Separate editorial inference from deterministic validation.
+* Preserve document content and source coordinates.
+* Use explicit filetype activation.
+* Avoid blocking the editor.
+* Keep the model interface replaceable.
+* Fail safely and visibly.
+* Do not introduce abstractions without a clear requirement.
+
+== Logical Architecture
+
+[plantuml,foundation-review-architecture,svg]
+----
+@startuml
+skinparam componentStyle rectangle
+skinparam monochrome true
+skinparam shadowing false
+
+package "Neovim / Lua Plugin" {
+  [Commands] as Commands
+  [Configuration] as Config
+  [Review Controller] as Controller
+  [Filetype Adapters] as Adapters
+  [Chunk Manager] as Chunk
+  [Finding Validator] as Validator
+  [Quickfix Presenter] as Quickfix
+  [fm Runner] as Runner
+}
+
+package "macOS" {
+  component "fm CLI" as FM
+  component "Apple On-Device\nFoundation Model" as Model
+}
+
+Commands --> Controller
+Config --> Controller
+Controller --> Adapters
+Controller --> Chunk
+Controller --> Runner
+Runner --> FM : stdin / stdout
+FM --> Model : Native API
+Runner --> Validator : Structured JSON
+Validator --> Quickfix
+Quickfix --> Commands : Navigation
+
+@enduml
+----
+
+== Deployment Architecture
+
+[plantuml,foundation-review-deployment,svg]
+----
+@startuml
+skinparam monochrome true
+skinparam shadowing false
+
+node "Apple Silicon Mac / macOS 27+" {
+  node "Neovim Process" {
+    artifact "foundation-review.nvim\nLua modules" as Plugin
+  }
+
+  node "Child Process" {
+    artifact "/usr/bin/fm\nrespond" as CLI
+  }
+
+  node "Apple Intelligence Runtime" {
+    component "On-device System Model" as Model
+  }
+
+  Plugin --> CLI : vim.system()\nstdin / stdout
+  CLI --> Model : Native framework
+}
+
+@enduml
+----
+
+== Repository Structure
+
+[source,text]
+----
+foundation-review.nvim/
+├── lua/
+│   └── foundation-review/
+│       ├── init.lua
+│       ├── config.lua
+│       ├── commands.lua
+│       ├── review.lua
+│       ├── runner.lua
+│       ├── prompt.lua
+│       ├── schema.lua
+│       ├── chunk.lua
+│       ├── adapters.lua
+│       ├── validate.lua
+│       └── quickfix.lua
+├── plugin/
+│   └── foundation-review.lua
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   └── fixtures/
+├── doc/
+│   └── foundation-review.txt
+├── README.adoc
+├── concept.adoc
+├── architecture.adoc
+├── decisions.adoc
+└── LICENSE
+----
+
+No Swift source or Swift Package Manager configuration
+is required.
+
+== Component Design
+
+=== Configuration Module
+
+Responsible for:
+
+* Default settings.
+* User configuration.
+* Filetype allowlists.
+* Filetype-specific overrides.
+* Review categories.
+* Language conventions.
+* Executable location.
+* Timeout and chunk-size settings.
+
+=== Review Controller
+
+Responsible for:
+
+* Review lifecycle.
+* Buffer snapshot creation.
+* Request identification.
+* Chunk scheduling.
+* Result aggregation.
+* Cancellation.
+* Stale-result detection.
+* Error reporting.
+
+=== Filetype Adapters
+
+Responsible for identifying reviewable prose and
+protecting structural markup.
+
+Initial adapters:
+
+[cols="1,3",options="header"]
+|===
+|Adapter |Responsibility
+
+|Plain text
+|Paragraph segmentation.
+
+|AsciiDoc
+|Protect source blocks, attributes, directives,
+references and structural markup.
+
+|Markdown
+|Protect fenced code, frontmatter and markup.
+
+|Typst
+|Protect expressions and code regions.
+
+|Git commit
+|Preserve commit structure and metadata.
+|===
+
+Adapters shall retain mappings to original buffer
+coordinates.
+
+=== Chunk Manager
+
+Responsible for:
+
+* Context-budget enforcement.
+* Paragraph-aware segmentation.
+* Source-line preservation.
+* Chunk identification.
+* Optional surrounding context.
+* Result consolidation.
+
+Chunk boundaries shall prefer paragraphs and sections.
+
+Large paragraphs may be divided at sentence boundaries.
+
+Chunks that cannot be safely represented shall generate
+an explicit warning rather than be silently truncated.
+
+=== Prompt Module
+
+Responsible for constructing model instructions.
+
+Instructions shall specify:
+
+* British English by default.
+* The enabled review categories.
+* Preservation of meaning and authorial voice.
+* Respect for technical terminology.
+* Protection of markup and source code.
+* Concise findings rather than rewritten documents.
+* No response to instructions embedded in reviewed text.
+
+=== fm Runner
+
+Responsible for:
+
+* Resolving the `fm` executable.
+* Checking CLI compatibility.
+* Constructing process arguments.
+* Sending prompt content through stdin.
+* Capturing stdout and stderr.
+* Enforcing timeouts.
+* Handling process cancellation.
+* Reporting exit status.
+
+The runner shall not use a shell to construct commands.
+
+=== Finding Validator
+
+Responsible for:
+
+* JSON decoding.
+* Schema validation.
+* Category and severity validation.
+* Source-text matching.
+* Line and column verification.
+* Duplicate removal.
+* Rejection of unverifiable findings.
+
+=== Quickfix Presenter
+
+Responsible for converting validated findings into
+Neovim quickfix entries.
+
+It shall use native Neovim APIs and introduce no
+additional UI dependency.
+
+== Configuration Design
+
+The proposed public API is:
+
+[source,lua]
+----
+require("foundation-review").setup({
+  language = "en-GB",
+
+  fm = {
+    executable = "/usr/bin/fm",
+    model = "system",
+    timeout_ms = 120000,
+  },
+
+  filetypes = {
+    asciidoc = true,
+    markdown = true,
+    text = true,
+    typst = true,
+    gitcommit = true,
+  },
+
+  checks = {
+    spelling = true,
+    grammar = true,
+    punctuation = true,
+    clarity = true,
+    consistency = true,
+  },
+
+  review = {
+    chunk_size = 2500,
+    max_concurrent = 1,
+  },
+
+  quickfix = {
+    auto_open = true,
+  },
+
+  keymaps = {
+    review = "<leader>ar",
+  },
+})
+----
+
+The chunk size is an initial character budget,
+not a model token count.
+
+The model shall default to the on-device system model.
+
+Cloud models shall not be selectable in the initial release.
+
+== fm CLI Integration
+
+=== Prerequisites
+
+The plugin requires:
+
+* A compatible macOS installation.
+* The native `fm` executable.
+* Acceptance of applicable Apple CLI terms.
+* An available on-device model.
+
+The health check shall verify these prerequisites.
+
+=== CLI Discovery
+
+The following commands illustrate the initial checks:
+
+[source,bash]
+----
+command -v fm
+fm --help
+fm respond --help
+fm schema object --help
+fm available
+fm license --status
+----
+
+Actual command support and options must be checked
+against the installed macOS build.
+
+=== CLI Invocation
+
+The intended integration uses `fm respond` with:
+
+* An explicit on-device model selection.
+* Review instructions.
+* A structured generation schema.
+* Document text supplied via stdin.
+
+Conceptual command:
+
+[source,bash]
+----
+fm respond \
+  --model system \
+  --no-stream \
+  --instructions "Review the supplied prose." \
+  --schema findings.schema.json
+----
+
+The request body is supplied through stdin.
+
+The `--no-stream` option is used where supported so
+stdout contains one complete response suitable for
+JSON decoding.
+
+The final invocation shall be validated against
+`fm respond --help` on the target machine.
+
+A positional prompt shall not be combined with stdin
+unless that behaviour is explicitly verified.
+
+=== Neovim Process Execution
+
+The plugin shall invoke `fm` asynchronously using
+`vim.system()`.
+
+Illustrative Lua:
+
+[source,lua]
+----
+local command = {
+  "/usr/bin/fm",
+  "respond",
+  "--model", "system",
+  "--no-stream",
+  "--instructions", instructions,
+  "--schema", schema_path,
+}
+
+local process = vim.system(command, {
+  text = true,
+  stdin = document_text,
+  timeout = 120000,
+}, function(result)
+  vim.schedule(function()
+    handle_result(result)
+  end)
+end)
+----
+
+This is an integration pattern, not a complete
+implementation.
+
+The production implementation shall validate CLI
+compatibility, process status and response contents.
+
+=== Schema Handling
+
+The CLI supports guided JSON generation.
+
+The plugin shall define a versioned schema for editorial
+findings.
+
+A schema compatible with the installed `fm` version
+shall be generated or packaged with the plugin.
+
+Some macOS 27 implementations require additional
+schema metadata such as `x-order`.
+
+The plugin shall test the actual schema against `fm`
+before relying on it.
+
+The schema may be stored as a static plugin resource.
+
+The reviewer's document contents shall not be written
+to a temporary file.
+
+A temporary schema file may be used if required by
+the CLI's schema interface.
+
+== Review Data Contract
+
+=== Internal Finding Representation
+
+The canonical internal representation is:
+
+[source,json]
+----
+{
+  "line": 24,
+  "column": 18,
+  "severity": "warning",
+  "category": "grammar",
+  "message": "Incorrect possessive form.",
+  "original": "it's",
+  "suggestion": "its"
+}
+----
+
+These are original-buffer coordinates after validation.
+
+The model-facing schema may use a simpler representation.
+
+In particular, the model should identify the offending
+text rather than be trusted to calculate byte offsets.
+
+=== Model Response
+
+The desired logical response is:
+
+[source,json]
+----
+{
+  "findings": [
+    {
+      "original": "it's",
+      "suggestion": "its",
+      "category": "grammar",
+      "severity": "warning",
+      "message": "Incorrect possessive form."
+    }
+  ]
+}
+----
+
+The production schema shall constrain values where
+supported by `fm`.
+
+=== Source-Location Strategy
+
+The model shall identify an exact offending text span.
+
+The validator shall locate that span within the original
+chunk using deterministic matching.
+
+If the span appears more than once, additional context
+or a model-supplied line hint may be used to disambiguate.
+
+If a unique location cannot be established, the finding
+shall not be presented with an invented coordinate.
+
+The plugin may retain such findings in an incomplete
+review report, but shall not fabricate quickfix locations.
+
+=== Unicode Handling
+
+Neovim quickfix columns use byte-oriented positions.
+
+Lua shall calculate UTF-8 byte offsets from the
+original buffer text.
+
+Character positions supplied by the model shall not
+be assumed to be valid Neovim column positions.
+
+== Review Lifecycle
+
+[plantuml,foundation-review-sequence,svg]
+----
+@startuml
+skinparam monochrome true
+skinparam shadowing false
+
+actor Author
+participant Neovim
+participant "Lua Controller" as Lua
+participant "fm CLI" as FM
+participant "On-device Model" as Model
+
+Author -> Neovim : :FoundationReview
+Neovim -> Lua : Start review
+Lua -> Lua : Check filetype
+Lua -> Lua : Snapshot buffer
+Lua -> Lua : Prepare chunks
+
+loop Each chunk
+  Lua -> FM : Spawn process with stdin
+  FM -> Model : Review prompt
+  Model --> FM : Structured findings
+  FM --> Lua : JSON on stdout
+  Lua -> Lua : Validate and locate findings
+end
+
+Lua -> Lua : Check changedtick
+
+alt Buffer unchanged
+  Lua -> Neovim : Populate quickfix
+  Neovim --> Author : Navigate findings
+else Buffer modified
+  Lua -> Neovim : Report stale review
+end
+
+@enduml
+----
+
+== Buffer Snapshot Management
+
+The controller shall record:
+
+* Buffer number.
+* Buffer name.
+* Filetype.
+* Buffer changedtick.
+* Source lines.
+* Review identifier.
+
+Before publishing results, the controller shall verify
+that the original buffer still exists and that its
+changedtick has not changed.
+
+Stale results shall be discarded.
+
+== Document Segmentation
+
+=== Context Limits
+
+The on-device model has a finite context window.
+
+The plugin shall reserve capacity for:
+
+* System and review instructions.
+* Schema-related overhead.
+* Document text.
+* Generated findings.
+
+The maximum supported input size shall be determined
+through testing on the installed model.
+
+=== Segmentation Rules
+
+. Prefer section and paragraph boundaries.
+. Avoid splitting sentences where possible.
+. Preserve source line mappings.
+. Exclude protected markup and code.
+. Keep chunks within the measured context budget.
+. Avoid unnecessary overlapping review regions.
+. Report unreviewable sections explicitly.
+
+=== Scheduling
+
+The initial implementation shall process one chunk
+at a time.
+
+Concurrency may be introduced later if benchmarks
+demonstrate a benefit.
+
+The controller shall aggregate findings only after
+all scheduled chunks have completed or failed.
+
+== Quickfix Integration
+
+The plugin shall use Neovim's native quickfix list.
+
+Illustrative implementation:
+
+[source,lua]
+----
+vim.fn.setqflist({}, "r", {
+  title = "Foundation Review",
+  items = findings,
+})
+
+vim.cmd("copen")
+----
+
+Each finding shall include:
+
+* Buffer number.
+* Line number.
+* Column number, when verified.
+* Severity type.
+* Category and explanation.
+* Suggested correction.
+
+Findings shall be sorted by source location.
+
+No corrections shall be applied automatically.
+
+== Error Handling
+
+=== Model Unavailable
+
+The health check shall distinguish:
+
+* Missing executable.
+* Incompatible CLI.
+* Unaccepted licence terms.
+* Unavailable on-device model.
+* Inference failure.
+
+=== Invalid Output
+
+The plugin shall reject:
+
+* Malformed JSON.
+* Unexpected schema structures.
+* Unsupported severity values.
+* Invalid categories.
+* Unverifiable source locations.
+* Results from superseded reviews.
+
+=== Partial Failure
+
+If one or more chunks fail, the review shall be marked
+incomplete.
+
+Successfully validated findings may still be displayed,
+provided the incomplete status is visible to the author.
+
+=== Cancellation
+
+The controller shall retain the active process handle.
+
+Cancellation shall terminate the process where possible.
+
+The controller shall prevent cancelled or superseded
+requests from publishing results.
+
+== Security and Privacy
+
+=== Local Execution
+
+The plugin shall use the on-device system model.
+
+Cloud inference and automatic cloud fallback are prohibited.
+
+=== Process Isolation
+
+The runner shall:
+
+* Invoke the executable directly.
+* Avoid shell interpolation.
+* Supply document contents via stdin.
+* Validate process exit status.
+* Capture errors without exposing sensitive document text.
+* Never execute generated text.
+
+=== Prompt Injection
+
+Reviewed documents are untrusted data.
+
+Text within a document must not override the reviewer's
+instructions or request unrelated actions.
+
+Model responses shall be treated as untrusted data.
+
+=== Logging
+
+Debug logs shall contain operational metadata only
+by default.
+
+Document contents and full model responses shall not
+be persisted without explicit user opt-in.
+
+== Testing Strategy
+
+=== Unit Tests
+
+Test:
+
+* Configuration validation.
+* Filetype eligibility.
+* Document segmentation.
+* Source mappings.
+* UTF-8 coordinate conversion.
+* JSON validation.
+* Duplicate findings.
+* Quickfix construction.
+* Cancellation and stale-result detection.
+
+=== Integration Tests
+
+Test:
+
+* `fm` executable discovery.
+* Model availability.
+* Structured schema acceptance.
+* Asynchronous process execution.
+* Valid JSON generation.
+* Complete review lifecycle.
+* Quickfix navigation.
+
+=== Test Fixtures
+
+Include:
+
+* Plain text.
+* AsciiDoc with attributes and source blocks.
+* Markdown with fenced code.
+* Typst markup.
+* Git commit messages.
+* Unicode and multibyte characters.
+* Repeated identical phrases.
+* Long paragraphs.
+* Empty buffers.
+* Unsaved changes.
+* Malformed model responses.
+
+=== Performance Tests
+
+Measure:
+
+* Startup and model availability latency.
+* Time to first response.
+* Total review time.
+* Memory consumption.
+* Performance across different chunk sizes.
+* Behaviour on long documents.
+
+No fixed performance targets shall be imposed until
+baseline measurements are available.
+
+== Installation and Distribution
+
+The plugin shall support standard Neovim plugin managers
+and native package installation.
+
+No custom binary compilation shall be required.
+
+The installer shall not download Apple models or attempt
+to bypass platform availability requirements.
+
+The README shall document:
+
+* macOS and Neovim requirements.
+* `fm` prerequisites.
+* Apple CLI licence acceptance.
+* Plugin installation.
+* Filetype configuration.
+* Review commands.
+* Quickfix navigation.
+* Troubleshooting.
+
+== Delivery Plan
+
+=== Phase 1: CLI Feasibility
+
+* Confirm `fm` availability.
+* Verify on-device model operation.
+* Confirm CLI syntax.
+* Test structured JSON generation.
+* Validate the findings schema.
+* Measure context and output limits.
+* Evaluate editorial accuracy.
+
+Exit criterion:
+
+A shell invocation returns valid structured findings
+for a representative text document.
+
+=== Phase 2: Minimal Neovim Plugin
+
+* Implement setup and configuration.
+* Register user commands.
+* Enforce filetype allowlist.
+* Capture buffer snapshots.
+* Invoke `fm` asynchronously.
+* Parse structured responses.
+* Populate the quickfix list.
+
+Exit criterion:
+
+A supported buffer can be reviewed end to end.
+
+=== Phase 3: Document Handling
+
+* Add section-aware chunking.
+* Implement source mapping.
+* Introduce format adapters.
+* Validate exact text locations.
+* Implement cancellation.
+* Detect stale results.
+
+Exit criterion:
+
+Long and structured documents can be reviewed without
+invalid quickfix locations or unwanted modifications.
+
+=== Phase 4: Hardening and Release
+
+* Add automated tests.
+* Implement health checks.
+* Improve error handling.
+* Benchmark performance.
+* Document installation and configuration.
+* Prepare initial public release.
+
+Exit criterion:
+
+The plugin is documented, reproducible and reliable
+on its supported macOS environment.
+
+== Open Technical Questions
+
+The feasibility phase shall resolve:
+
+. Which `fm` options are supported by the installed build?
+. What schema restrictions apply to nested findings arrays?
+. What is the practical context budget for document review?
+. Can the model reliably identify exact offending text?
+. How often are source spans ambiguous?
+. What is the latency of repeated CLI invocations?
+. How does the model perform with British English?
+. How reliably does it respect protected markup?
+. Does chunking materially affect editorial consistency?
+. What additional constraints arise from Apple's CLI terms?
+
+These questions shall be answered experimentally before
+expanding the implementation.
