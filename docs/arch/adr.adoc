@@ -5,7 +5,7 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.1
+:revnumber: 0.2
 :revdate: 2026-11-16
 
 == Purpose
@@ -33,7 +33,7 @@ Superseded decisions shall not be deleted.
 
 |001
 |Use native macOS `fm` instead of custom Swift
-|Proposed
+|Superseded by ADR-014
 
 |002
 |Implement the plugin entirely in Lua
@@ -41,11 +41,11 @@ Superseded decisions shall not be deleted.
 
 |003
 |Use asynchronous CLI process execution
-|Accepted
+|Superseded by ADR-015
 
 |004
 |Use structured JSON generation
-|Proposed
+|Accepted, revised by ADR-016
 
 |005
 |Use Neovim quickfix for findings
@@ -65,7 +65,7 @@ Superseded decisions shall not be deleted.
 
 |009
 |Use the on-device model exclusively
-|Accepted
+|Superseded by ADR-014
 
 |010
 |Use format-aware document segmentation
@@ -82,437 +82,892 @@ Superseded decisions shall not be deleted.
 |013
 |Keep inference integration behind an adapter
 |Accepted
+
+|014
+|Use local Ollama inference instead of Apple `fm`
+|Accepted
+
+|015
+|Use asynchronous Ollama HTTP requests
+|Accepted
+
+|016
+|Enforce a versioned findings schema and source validation
+|Accepted
+
+|017
+|Restrict the plugin to four proofreading capabilities
+|Accepted
+
+|018
+|Use Gemma 4 12B as the provisional default model
+|Provisional
+
+|019
+|Protect markup before inference
+|Accepted
+
+|020
+|Distinguish corrections from sentence rewrites
+|Accepted
 |===
 
-== ADR-001: Native macOS fm Integration
+== Historical Decisions
 
-Status:: Proposed
+=== ADR-001: Native macOS fm Integration
+
+Status:: Superseded
 Date:: 2026-11-16
-Supersedes:: Previous Swift helper design
+Superseded by:: ADR-014
 
-=== Context
+==== Original Context
 
 The original architecture required a custom Swift
 command-line application to access Apple's Foundation
 Models framework.
 
-macOS 27 introduces the native `fm` command-line utility,
-providing direct access to the on-device model.
+The native macOS `fm` utility appeared to remove
+the need for that helper.
 
-The utility supports prompt execution and structured
-generation without requiring a custom Swift application.
+==== Original Decision
 
-=== Decision
+Use the native `fm respond` command instead of
+a custom Swift executable.
 
-Replace the proposed Swift helper with direct invocation
-of the native `fm` CLI.
+==== Original Rationale
 
-The plugin shall use the `respond` command for inference.
+* Avoid a compiled helper.
+* Reduce installation complexity.
+* Retain local inference.
+* Use structured generation.
+* Minimise dependencies.
 
-=== Rationale
+==== Supersession
 
-* Removes a compiled application component.
-* Eliminates Swift build and packaging requirements.
-* Reduces implementation and maintenance complexity.
-* Uses a native operating-system capability.
-* Simplifies installation and distribution.
-* Retains local inference and structured output.
+Comparative testing demonstrated that the available
+on-device model did not provide adequate proofreading
+accuracy for the intended application.
 
-=== Consequences
+The decision to avoid a custom Swift executable remains
+valid, but `fm` is no longer the selected inference
+interface.
 
-Positive::
-
-* Smaller codebase.
-* Simpler installation.
-* No Swift toolchain dependency.
-* No custom binary distribution.
-* Fewer integration boundaries.
-
-Negative::
-
-* Depends on macOS-specific CLI behaviour.
-* CLI options may change between releases.
-* Less control than direct framework integration.
-* Schema support must be verified.
-* Process startup overhead may affect performance.
-
-=== Validation
-
-Before acceptance:
-
-. Verify the installed CLI version and capabilities.
-. Confirm model availability.
-. Confirm structured JSON output.
-. Verify stdin-based document submission.
-. Review applicable Apple CLI terms.
-. Benchmark representative document reviews.
-
-If these tests fail, reconsider a native framework
-adapter without changing the Lua plugin architecture.
-
-== ADR-002: Lua-Only Plugin Implementation
+=== ADR-002: Lua-Only Plugin Implementation
 
 Status:: Accepted
 Date:: 2026-11-16
 
-=== Context
+==== Context
 
 Neovim provides native Lua APIs for buffer management,
 process execution, configuration and quickfix navigation.
 
-The `fm` CLI removes the requirement for custom native
-framework bindings.
-
-=== Decision
+==== Decision
 
 Implement all project-specific application logic in Lua.
 
-=== Rationale
+==== Rationale
 
 * Native Neovim integration.
 * Minimal dependencies.
 * Straightforward maintenance.
 * Familiar plugin architecture.
-* No additional runtime language.
+* No additional application runtime language.
 
-=== Consequences
+==== Consequences
 
-The plugin shall remain macOS-specific for inference,
-although its document-handling modules may be portable.
+The plugin shall not require a custom Swift or Python
+application.
 
-== ADR-003: Asynchronous CLI Execution
+The inference service itself is provided by Ollama.
 
-Status:: Accepted
+=== ADR-003: Asynchronous CLI Execution
+
+Status:: Superseded
 Date:: 2026-11-16
+Superseded by:: ADR-015
 
-=== Context
+==== Original Context
 
 Model inference may require several seconds or longer.
 
-Synchronous execution would block Neovim's interface.
+Synchronous execution would block Neovim.
 
-=== Decision
+==== Original Decision
 
-Invoke `fm` asynchronously using `vim.system()`.
+Invoke the `fm` CLI asynchronously through `vim.system()`.
 
-Pass document text through stdin.
+==== Supersession
 
-Capture stdout and stderr independently.
+The requirement for asynchronous execution remains.
 
-=== Rationale
+The inference transport changes from the `fm` CLI
+to local Ollama HTTP requests.
 
-* Keeps Neovim responsive.
-* Supports cancellation and timeouts.
-* Avoids temporary document files.
-* Requires no persistent service.
+=== ADR-004: Structured JSON Generation
 
-=== Consequences
-
-The controller must manage process handles, callbacks,
-request state and cancellation.
-
-== ADR-004: Structured JSON Generation
-
-Status:: Proposed
+Status:: Accepted
 Date:: 2026-11-16
+Revised by:: ADR-016
 
-=== Context
+==== Context
 
 Free-form model responses are difficult to convert
 reliably into editor diagnostics.
 
-The `fm` CLI supports schema-guided generation.
-
-=== Decision
+==== Decision
 
 Use structured JSON output with a versioned findings schema.
 
-=== Rationale
+==== Rationale
 
 * Predictable response structure.
 * Simplified Lua parsing.
 * Easier validation.
 * Improved testability.
-* Clear separation of model output and presentation.
+* Separation of inference and presentation.
 
-=== Consequences
+==== Consequences
 
-The schema must conform to the installed CLI's
-supported generation-schema format.
+The schema shall be supplied through Ollama's structured
+output interface.
 
-Version-specific requirements shall be isolated in
-the schema integration module.
+Schema compliance does not guarantee correctness.
 
-== ADR-005: Native Quickfix Presentation
+All findings require additional deterministic validation.
+
+=== ADR-005: Native Quickfix Presentation
 
 Status:: Accepted
 Date:: 2026-11-16
 
-=== Context
+==== Context
 
-Neovim already provides a mature mechanism for navigating
+Neovim provides a mature mechanism for navigating
 source-location-based findings.
 
-=== Decision
+==== Decision
 
 Use the native quickfix list as the primary interface.
 
-=== Rationale
+==== Rationale
 
 * No additional UI dependencies.
 * Familiar navigation.
 * Supports line and column positions.
 * Works with existing Neovim commands.
-* Avoids creating a separate review interface.
 
-=== Consequences
+==== Consequences
 
 Findings must have validated source coordinates before
 being presented as navigable quickfix entries.
 
-== ADR-006: Explicit Filetype Allowlist
+=== ADR-006: Explicit Filetype Allowlist
 
 Status:: Accepted
 Date:: 2026-11-16
 
-=== Context
+==== Context
 
 The reviewer targets prose and markup documents rather
 than arbitrary source code.
 
-=== Decision
+==== Decision
 
 Activate only for configured Neovim filetypes.
 
-=== Rationale
+==== Rationale
 
 * Prevents inappropriate reviews.
 * Avoids accidental inference on source code.
-* Allows format-specific instructions.
-* Mirrors familiar Neovim configuration conventions.
+* Allows format-specific protection.
+* Uses familiar Neovim configuration conventions.
 
-=== Consequences
+==== Consequences
 
 Users must explicitly enable additional filetypes.
 
-== ADR-007: Non-Destructive Review
+=== ADR-007: Non-Destructive Review
 
 Status:: Accepted
 Date:: 2026-11-16
 
-=== Context
+==== Context
 
 Generative models may suggest inappropriate corrections
 or changes to technical meaning.
 
-=== Decision
+==== Decision
 
 The plugin shall never modify source buffers automatically.
 
-=== Rationale
+==== Rationale
 
 * Preserves authorial control.
 * Prevents accidental document corruption.
 * Simplifies the initial implementation.
 * Avoids complex edit reconciliation.
 
-=== Consequences
+==== Consequences
 
 The author applies corrections manually.
 
 Selective correction application may be considered
 in a later release.
 
-== ADR-008: Deterministic Source Validation
+=== ADR-008: Deterministic Source Validation
 
 Status:: Accepted
 Date:: 2026-11-16
 
-=== Context
+==== Context
 
 Language models may produce incorrect line numbers,
 columns or text offsets.
 
 Markup and Unicode increase this risk.
 
-=== Decision
+==== Decision
 
 Use the model to identify issues and offending text.
 
-Use Lua to validate and locate those findings in the
+Use Lua to validate and locate findings in the
 original buffer snapshot.
 
-=== Rationale
+==== Rationale
 
 * Prevents fabricated source positions.
 * Supports accurate quickfix navigation.
-* Handles Unicode through explicit byte-offset conversion.
-* Separates probabilistic inference from deterministic logic.
+* Handles Unicode through explicit byte offsets.
+* Separates inference from deterministic logic.
 
-=== Consequences
+==== Consequences
 
-Ambiguous or unverifiable findings may not receive
-navigable quickfix entries.
+Ambiguous or unverifiable findings shall not receive
+fabricated quickfix locations.
 
-The plugin shall report such limitations rather than
-invent coordinates.
+Rejected findings shall be counted and reported.
 
-== ADR-009: On-Device Inference Only
+=== ADR-009: On-Device Inference Only
 
-Status:: Accepted
+Status:: Superseded
 Date:: 2026-11-16
+Superseded by:: ADR-014
 
-=== Context
+==== Original Context
 
 Document review may involve private or unpublished material.
 
-The `fm` CLI may expose multiple model execution options
-depending on the macOS version.
+The original architecture used Apple's on-device model.
 
-=== Decision
+==== Original Decision
 
 Use the on-device system model exclusively.
 
 Do not permit automatic cloud fallback.
 
-=== Rationale
+==== Supersession
 
-* Maintains local document processing.
-* Avoids external API credentials.
-* Supports offline operation.
-* Provides predictable privacy boundaries.
+The privacy requirement remains unchanged.
 
-=== Consequences
+The implementation now uses a locally hosted model
+through Ollama rather than Apple's system model.
 
-Review quality and context capacity are limited by the
-available on-device model.
+No automatic cloud fallback is permitted.
 
-Model unavailability shall cause a visible failure.
-
-== ADR-010: Format-Aware Segmentation
+=== ADR-010: Format-Aware Segmentation
 
 Status:: Accepted
 Date:: 2026-11-16
 
-=== Context
+==== Context
 
-Documents may exceed the model's context capacity.
+Documents may exceed the configured model context.
 
-Markup documents also contain structural elements that
-should not be treated as ordinary prose.
+Markup documents contain structural elements that
+should not be treated as prose.
 
-=== Decision
+==== Decision
 
 Implement document segmentation using configurable
 filetype adapters.
 
-=== Rationale
+==== Rationale
 
 * Supports long documents.
 * Protects markup syntax.
 * Preserves source locations.
-* Allows future format-specific improvements.
+* Allows format-specific handling.
 
-=== Consequences
+==== Consequences
 
 Segmentation and source mapping require dedicated tests.
 
 The initial implementation shall prioritise correctness
 over sophisticated parsing.
 
-== ADR-011: Buffer Snapshot Consistency
+=== ADR-011: Buffer Snapshot Consistency
 
 Status:: Accepted
 Date:: 2026-11-16
 
-=== Context
+==== Context
 
 The author may continue editing while a review is running.
 
 Findings generated against an earlier document state
 may become invalid.
 
-=== Decision
+==== Decision
 
-Capture the buffer changedtick and source snapshot when
-a review begins.
+Capture the buffer changedtick and source snapshot
+when a review begins.
 
 Discard results if the buffer changes before publication.
 
-=== Rationale
+==== Rationale
 
 * Prevents stale diagnostics.
 * Protects source-location accuracy.
 * Avoids misleading quickfix navigation.
 
-=== Consequences
+==== Consequences
 
 The author may need to repeat a review after editing.
 
 Incremental reconciliation is deferred.
 
-== ADR-012: No Custom Language Server
+=== ADR-012: No Custom Language Server
 
 Status:: Accepted
 Date:: 2026-11-16
 
-=== Context
+==== Context
 
-The plugin resembles a language diagnostic tool but does
-not require continuous document analysis.
+The plugin resembles a language diagnostic tool but
+does not require continuous document analysis.
 
-Neovim already provides the necessary APIs.
-
-=== Decision
+==== Decision
 
 Do not implement the Language Server Protocol.
 
-=== Rationale
+==== Rationale
 
 * Avoids unnecessary infrastructure.
 * Simplifies implementation.
 * Preserves manual review semantics.
 * Allows direct quickfix integration.
 
-=== Consequences
+==== Consequences
 
 The plugin shall not expose itself as an LSP server.
 
 Optional diagnostics integration may be added later
 without implementing the LSP protocol.
 
-== ADR-013: Isolated Inference Adapter
+=== ADR-013: Isolated Inference Adapter
 
 Status:: Accepted
 Date:: 2026-11-16
 
-=== Context
+==== Context
 
-The initial implementation uses Apple's `fm` CLI.
+Inference interfaces and model capabilities may change.
 
-The CLI may evolve, and direct framework integration
-could become necessary if a required capability is absent.
+The document-processing and presentation components
+should not depend on a particular inference transport.
 
-=== Decision
+==== Decision
 
 Isolate inference execution behind a Lua adapter.
 
 The review controller shall not depend directly on
-CLI argument construction or output formatting.
+HTTP request construction or provider-specific responses.
 
-=== Rationale
+==== Rationale
 
-* Contains platform-specific behaviour.
+* Contains inference-specific behaviour.
 * Simplifies testing through mock responses.
-* Supports CLI compatibility changes.
-* Avoids coupling document logic to inference transport.
+* Supports model changes.
+* Avoids coupling document logic to transport.
 
-=== Consequences
+==== Consequences
 
 The adapter introduces a small abstraction boundary.
 
-Alternative inference backends remain outside the
-initial project scope.
+Alternative providers are not required for the
+initial release.
+
+== Current Decisions
+
+=== ADR-014: Local Ollama Inference
+
+Status:: Accepted
+Date:: 2026-11-16
+Supersedes:: ADR-001, ADR-009
+
+==== Context
+
+The original architecture selected Apple's native
+Foundation Models interface through the `fm` CLI.
+
+Subsequent local testing compared eight inference
+engines using structured JSON responses.
+
+The on-device Apple Foundation Model identified only
+one of four seeded defects and produced two confidently
+incorrect grammatical findings.
+
+It also failed to identify either redundancy cluster
+in the evaluation passage.
+
+Its available context window was approximately
+4,096 tokens.
+
+The results demonstrated that the model was unsuitable
+for the intended proofreading workflow.
+
+Ollama-hosted models demonstrated substantially better
+performance in the same preliminary evaluation.
+
+==== Decision
+
+Use local Ollama inference for the initial release.
+
+The plugin shall connect to a configured loopback
+Ollama endpoint.
+
+Apple `fm` integration shall not be implemented
+in the initial release.
+
+==== Rationale
+
+* Better preliminary language-review performance.
+* Configurable model selection.
+* Larger practical context options.
+* Local processing without external API credentials.
+* Existing Ollama installation on the target machine.
+* No custom compiled inference helper.
+
+==== Consequences
+
+Positive::
+
+* The plugin can use different local models.
+* The inference interface is independent of macOS `fm`.
+* Model upgrades do not require plugin redesign.
+* Document contents remain local during inference.
+
+Negative::
+
+* Ollama must be installed and running.
+* Models must be downloaded and managed.
+* Memory and inference latency depend on model selection.
+* Model quality remains probabilistic.
+
+==== Validation
+
+The Ollama endpoint, configured model and structured
+output behaviour shall be checked before review.
+
+The plugin shall fail visibly if the service or model
+is unavailable.
+
+=== ADR-015: Asynchronous Ollama HTTP Transport
+
+Status:: Accepted
+Date:: 2026-11-16
+Supersedes:: ADR-003
+
+==== Context
+
+Model inference may take several seconds or longer.
+
+Neovim must remain responsive.
+
+The selected inference service exposes a local HTTP API.
+
+==== Decision
+
+Use asynchronous HTTP requests to Ollama.
+
+The initial implementation may invoke `curl`
+through `vim.system()`.
+
+The adapter shall submit JSON request bodies and
+receive complete JSON responses.
+
+==== Rationale
+
+* Avoids blocking Neovim.
+* Uses native Neovim process management.
+* Requires no additional Lua HTTP dependency.
+* Supports timeouts and cancellation.
+* Avoids placing document contents in shell arguments.
+
+==== Consequences
+
+The adapter must handle:
+
+* Connection failures.
+* HTTP errors.
+* Timeouts.
+* Cancellation.
+* Invalid responses.
+* Model unavailability.
+
+No shell interpolation shall be used.
+
+The controller shall prevent cancelled requests
+from publishing results.
+
+=== ADR-016: Structured Findings and Exact-Source Validation
+
+Status:: Accepted
+Date:: 2026-11-16
+Revises:: ADR-004
+Reinforces:: ADR-008
+
+==== Context
+
+Local model testing demonstrated that schema-constrained
+generation does not guarantee exact source quotations.
+
+Models sometimes returned entire paragraphs or code
+blocks, combined independent defects or quoted text
+that did not match the source exactly.
+
+These failures undermine reliable quickfix navigation.
+
+==== Decision
+
+Use a versioned JSON Schema for model responses.
+
+Apply deterministic validation to every finding before
+creating a quickfix entry.
+
+A finding shall be accepted only when:
+
+* Its category is supported.
+* Its original quotation matches the source exactly.
+* Its source location can be resolved unambiguously.
+* It does not overlap protected content.
+* It belongs to the current buffer snapshot.
+
+==== Rationale
+
+* Prevents fabricated locations.
+* Protects source navigation.
+* Rejects malformed or unverifiable output.
+* Separates model behaviour from editor correctness.
+
+==== Consequences
+
+Some potentially useful findings may be rejected.
+
+The plugin shall report rejected-finding counts.
+
+It shall not silently invent source coordinates.
+
+Exact-source fidelity and finding granularity shall
+be measured separately in model evaluations.
+
+=== ADR-017: Restricted Proofreading Scope
+
+Status:: Accepted
+Date:: 2026-11-16
+
+==== Context
+
+The original concept included general editorial review,
+ambiguity detection, repetition analysis and stylistic
+consistency.
+
+The intended primary use is narrower: correcting
+spelling, grammar and punctuation in written prose.
+
+The author also requires assistance with excessively
+long or convoluted sentences.
+
+Expanding into general editorial analysis would increase
+complexity, latency and unwanted suggestions.
+
+==== Decision
+
+The initial release shall support exactly four
+proofreading categories:
+
+. Spelling.
+. Grammar.
+. Punctuation.
+. Sentence readability and restructuring.
+
+The sentence-readability category shall identify
+unwieldy sentence construction and suggest improvements
+without changing meaning.
+
+==== Rationale
+
+* Aligns with the actual user requirement.
+* Avoids scope creep.
+* Simplifies prompts and response validation.
+* Reduces irrelevant findings.
+* Makes model evaluation more focused.
+* Keeps the implementation maintainable.
+
+==== Consequences
+
+The following are outside the initial scope:
+
+* General stylistic rewriting.
+* Independent ambiguity analysis.
+* Independent repetition analysis.
+* Logical consistency checking.
+* Terminology consistency analysis.
+* Document-wide rewriting.
+* Fact-checking.
+
+These capabilities shall not be introduced implicitly
+through prompts or model configuration.
+
+Any expansion requires an explicit scope decision.
+
+=== ADR-018: Provisional Gemma 4 12B Selection
+
+Status:: Provisional
+Date:: 2026-11-16
+
+==== Context
+
+A preliminary local comparison evaluated eight engines
+using one AsciiDoc passage and three prompt variants.
+
+The test contained four seeded defects:
+
+* One subject-verb agreement error.
+* Two redundancy clusters.
+* One pronoun ambiguity.
+
+It also included British English and AsciiDoc traps.
+
+The reported results were:
+
+[cols="3,1,1,1,1",options="header"]
+|===
+|Engine |Defects found |False rules |Markup violations |Exact quotes
+
+|`gemma4:12b-it-qat`
+|4/4
+|0
+|0
+|11/13
+
+|`qwen3.5:9b-q4_K_M`
+|4/4
+|1 soft
+|0
+|6/11
+
+|`gemma4:e4b-it-qat`
+|4/4
+|1
+|1
+|8/16
+
+|`qwen3.5:4b-q4_K_M`
+|3/4
+|0
+|0
+|6/11
+
+|`qwen3.5:2b-q4_K_M`
+|3/4
+|1
+|0
+|2/7
+
+|`granite4.2:3b-q4_K_M`
+|3/4
+|1 plus 1 no-op
+|0
+|1/6
+
+|`qwen2.5:7b`
+|2/4
+|2
+|2
+|9/12
+
+|Apple AFM 3 Core
+|1/4
+|2
+|0
+|3/5
+|===
+
+Gemma 4 12B achieved the strongest overall result
+in this preliminary comparison.
+
+However, the test primarily assessed editorial
+capabilities and did not adequately measure the
+revised proofreading requirements.
+
+==== Decision
+
+Use `gemma4:12b-it-qat` as the provisional
+default model.
+
+Retain `qwen3.5:9b-q4_K_M` as the principal
+alternative for further evaluation.
+
+Retain `qwen3.5:4b-q4_K_M` as a lightweight
+comparison candidate.
+
+Do not declare the final model selection until
+a proofreading-specific benchmark is complete.
+
+==== Rationale
+
+* Strongest preliminary source fidelity.
+* No confident false rules in the tested passage.
+* No markup violations in the tested passage.
+* Suitable measured inference performance.
+* Runs comfortably on the target Mac Studio.
+
+==== Consequences
+
+The default model may change following evaluation.
+
+The plugin shall not depend on model-specific output
+beyond the agreed structured response contract.
+
+==== Required Validation
+
+Create a corpus of approximately 40 passages covering:
+
+* Spelling errors.
+* Grammar errors.
+* Punctuation errors.
+* Unwieldy sentences.
+* Correct British English.
+* Correct long sentences.
+* Clean passages.
+* Technical prose.
+* AsciiDoc markup.
+* Repeated quotations.
+
+Measure:
+
+* Precision.
+* Recall.
+* False-positive rate.
+* Correction accuracy.
+* Rewrite quality.
+* Exact-source quotation accuracy.
+* Finding granularity.
+* Markup preservation.
+* Review latency.
+
+The benchmark shall prioritise the four agreed
+proofreading capabilities.
+
+Parameter count and general editorial performance
+shall not substitute for task-specific results.
+
+=== ADR-019: Protect Markup Before Inference
+
+Status:: Accepted
+Date:: 2026-11-16
+Reinforces:: ADR-010
+
+==== Context
+
+Local testing demonstrated that models may treat
+AsciiDoc source blocks and structural syntax as prose.
+
+Some models returned findings covering code blocks
+or proposed corrections to valid markup.
+
+Prompt instructions alone did not reliably prevent
+these errors.
+
+==== Decision
+
+Protect non-prose content before submitting text
+to the model.
+
+Use format-aware exclusion or sentinel masking.
+
+Preserve deterministic mappings to the original buffer.
+
+==== Rationale
+
+* Prevents inappropriate proofreading of code.
+* Protects AsciiDoc structure.
+* Reduces model distraction.
+* Improves source-location reliability.
+* Avoids relying solely on prompt compliance.
+
+==== Consequences
+
+Format adapters require dedicated tests.
+
+If masking changes text length, explicit source
+offset mapping is required.
+
+Findings overlapping protected regions shall be rejected.
+
+=== ADR-020: Separate Corrections and Sentence Rewrites
+
+Status:: Accepted
+Date:: 2026-11-16
+Reinforces:: ADR-007
+
+==== Context
+
+Spelling, grammar and punctuation errors usually
+require localised corrections.
+
+Unwieldy sentence construction may require replacing
+or dividing an entire sentence.
+
+These are different kinds of finding and should not
+be presented as equivalent errors.
+
+==== Decision
+
+Support two logical finding types.
+
+Correction::
+A localised spelling, grammar or punctuation issue.
+
+Sentence rewrite::
+An advisory replacement for a complete sentence
+whose construction makes it unnecessarily difficult
+to read.
+
+Both shall use the same quickfix interface.
+
+==== Rationale
+
+* Preserves finding granularity.
+* Distinguishes errors from suggestions.
+* Supports accurate source navigation.
+* Avoids unnecessary rewriting.
+* Maintains authorial control.
+
+==== Consequences
+
+Sentence rewrites shall quote the complete
+original sentence.
+
+Length alone shall not trigger a finding.
+
+Rewrites shall preserve meaning, factual detail,
+technical terminology and authorial voice.
+
+No suggested correction or rewrite shall be
+applied automatically.
 
 == Decision Governance
 
@@ -521,6 +976,7 @@ initial project scope.
 Each ADR may have one of these states:
 
 * Proposed
+* Provisional
 * Accepted
 * Superseded
 * Rejected
@@ -544,15 +1000,31 @@ A superseding ADR shall reference the earlier decision.
 
 == Outstanding Decisions
 
-The following matters remain subject to feasibility testing:
+The following matters remain subject to testing:
 
-* Exact structured-output schema representation.
-* Schema generation versus packaged schema files.
-* Maximum practical document chunk size.
-* Whether repeated CLI invocations create unacceptable latency.
-* Handling of findings with ambiguous source locations.
-* Appropriate performance and quality benchmarks.
-* Compatibility requirements across macOS 27 releases.
-* Licensing implications for public plugin distribution.
+* Final proofreading model selection.
+* Practical context and chunk size.
+* Handling repeated identical source quotations.
+* Sentence-boundary detection across AsciiDoc markup.
+* Quality thresholds for sentence rewrites.
+* Acceptable false-positive rates.
+* Review latency on representative documents.
+* Handling of partially failed reviews.
+* Public distribution and dependency documentation.
 
 These shall be resolved before the first public release.
+
+== Scope Control
+
+The project shall remain focused on:
+
+* British English spelling.
+* Grammar.
+* Punctuation.
+* Unwieldy sentence detection and restructuring.
+
+New editorial capabilities require a separate,
+explicitly accepted architectural decision.
+
+The presence of a capable language model does not
+constitute a requirement to use its other capabilities.

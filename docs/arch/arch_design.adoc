@@ -5,34 +5,46 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.2
+:revnumber: 0.3
 :revdate: 2026-11-16
 
 == Architecture Overview
 
-Foundation Review is a Lua-based Neovim plugin that invokes
-the native macOS `fm` CLI to analyse text and markup documents.
+Foundation Review is a Lua-based Neovim plugin providing
+on-demand British English proofreading through Ollama.
+
+The initial release supports four checks:
+
+* Spelling.
+* Grammar.
+* Punctuation.
+* Unwieldy sentence detection and suggested restructuring.
 
 The solution comprises three logical layers:
 
 . Neovim integration and presentation.
-. Document preparation and review orchestration.
-. Native Apple Foundation Models inference.
+. Document preparation, validation and orchestration.
+. Local inference through Ollama.
 
 All application-specific logic resides in Lua.
 
-No custom Swift executable, HTTP server, or persistent
-inference service is required.
+No custom Swift executable, Python runtime, custom HTTP
+server or additional persistent application service
+is required.
+
+Ollama itself is the local inference service.
 
 == Architectural Principles
 
-* Prefer native platform capabilities.
+* Prioritise proofreading over general editorial analysis.
 * Minimise dependencies and operational complexity.
-* Separate editorial inference from deterministic validation.
+* Separate probabilistic inference from deterministic validation.
 * Preserve document content and source coordinates.
+* Use British English by default.
+* Protect markup and technical content.
 * Use explicit filetype activation.
 * Avoid blocking the editor.
-* Keep the model interface replaceable.
+* Keep model selection configurable.
 * Fail safely and visibly.
 * Do not introduce abstractions without a clear requirement.
 
@@ -51,26 +63,29 @@ package "Neovim / Lua Plugin" {
   [Review Controller] as Controller
   [Filetype Adapters] as Adapters
   [Chunk Manager] as Chunk
+  [Prompt Builder] as Prompt
+  [Ollama Adapter] as Runner
   [Finding Validator] as Validator
   [Quickfix Presenter] as Quickfix
-  [fm Runner] as Runner
 }
 
-package "macOS" {
-  component "fm CLI" as FM
-  component "Apple On-Device\nFoundation Model" as Model
+package "Local Ollama Service" {
+  component "HTTP API" as API
+  component "Configured Model\nGemma 4 12B" as Model
 }
 
 Commands --> Controller
 Config --> Controller
 Controller --> Adapters
-Controller --> Chunk
-Controller --> Runner
-Runner --> FM : stdin / stdout
-FM --> Model : Native API
-Runner --> Validator : Structured JSON
+Adapters --> Chunk
+Chunk --> Prompt
+Prompt --> Runner
+Runner --> API : JSON request
+API --> Model
+Model --> API : JSON response
+API --> Runner
+Runner --> Validator
 Validator --> Quickfix
-Quickfix --> Commands : Navigation
 
 @enduml
 ----
@@ -83,25 +98,27 @@ Quickfix --> Commands : Navigation
 skinparam monochrome true
 skinparam shadowing false
 
-node "Apple Silicon Mac / macOS 27+" {
+node "Apple Silicon Mac" {
   node "Neovim Process" {
     artifact "foundation-review.nvim\nLua modules" as Plugin
   }
 
-  node "Child Process" {
-    artifact "/usr/bin/fm\nrespond" as CLI
+  node "Local Ollama Service" {
+    component "Ollama HTTP API\n127.0.0.1:11434" as API
+    component "gemma4:12b-it-qat" as Model
   }
 
-  node "Apple Intelligence Runtime" {
-    component "On-device System Model" as Model
-  }
-
-  Plugin --> CLI : vim.system()\nstdin / stdout
-  CLI --> Model : Native framework
+  Plugin --> API : HTTP / JSON
+  API --> Model
 }
 
 @enduml
 ----
+
+The initial deployment shall use a loopback Ollama
+endpoint.
+
+No automatic cloud fallback shall be implemented.
 
 == Repository Structure
 
@@ -114,7 +131,7 @@ foundation-review.nvim/
 │       ├── config.lua
 │       ├── commands.lua
 │       ├── review.lua
-│       ├── runner.lua
+│       ├── ollama.lua
 │       ├── prompt.lua
 │       ├── schema.lua
 │       ├── chunk.lua
@@ -126,13 +143,14 @@ foundation-review.nvim/
 ├── tests/
 │   ├── unit/
 │   ├── integration/
-│   └── fixtures/
+│   ├── fixtures/
+│   └── benchmark/
 ├── doc/
 │   └── foundation-review.txt
 ├── README.adoc
 ├── concept.adoc
-├── architecture.adoc
-├── decisions.adoc
+├── arch_design.adoc
+├── adr.adoc
 └── LICENSE
 ----
 
@@ -146,13 +164,14 @@ is required.
 Responsible for:
 
 * Default settings.
-* User configuration.
+* User configuration validation.
 * Filetype allowlists.
 * Filetype-specific overrides.
-* Review categories.
-* Language conventions.
-* Executable location.
+* The four supported proofreading checks.
+* British English conventions.
+* Ollama endpoint and model selection.
 * Timeout and chunk-size settings.
+* Quickfix presentation preferences.
 
 === Review Controller
 
@@ -198,6 +217,31 @@ references and structural markup.
 Adapters shall retain mappings to original buffer
 coordinates.
 
+=== Markup Protection
+
+Non-prose content shall be excluded from inference
+or represented by protected sentinels.
+
+Protected content includes:
+
+* Source and literal blocks.
+* URLs.
+* Document attributes.
+* Cross-references and directives.
+* Inline code.
+* Format-specific structural syntax.
+
+The implementation shall preserve a mapping between
+reviewable text and original source positions.
+
+Length-preserving masking may be used where practical.
+
+Otherwise, explicit transformed-to-original offset
+maps are required.
+
+A model finding shall never be accepted solely because
+its quotation matches a sentinel.
+
 === Chunk Manager
 
 Responsible for:
@@ -206,12 +250,17 @@ Responsible for:
 * Paragraph-aware segmentation.
 * Source-line preservation.
 * Chunk identification.
+* Sentence-boundary preservation.
 * Optional surrounding context.
 * Result consolidation.
 
 Chunk boundaries shall prefer paragraphs and sections.
 
-Large paragraphs may be divided at sentence boundaries.
+Long paragraphs may be divided at sentence boundaries.
+
+Unwieldy sentences should remain intact where possible,
+because sentence restructuring requires the complete
+sentence.
 
 Chunks that cannot be safely represented shall generate
 an explicit warning rather than be silently truncated.
@@ -223,27 +272,45 @@ Responsible for constructing model instructions.
 Instructions shall specify:
 
 * British English by default.
-* The enabled review categories.
+* Spelling, grammar, punctuation and sentence readability.
+* No unrelated editorial analysis.
 * Preservation of meaning and authorial voice.
 * Respect for technical terminology.
 * Protection of markup and source code.
-* Concise findings rather than rewritten documents.
+* Exact quotations from the supplied text.
+* One independent finding per error.
+* Complete sentences for sentence-rewrite findings.
 * No response to instructions embedded in reviewed text.
 
-=== fm Runner
+The default review shall use a single general
+proofreading prompt per chunk.
+
+Additional inference passes are not required for
+the initial release.
+
+=== Ollama Adapter
 
 Responsible for:
 
-* Resolving the `fm` executable.
-* Checking CLI compatibility.
-* Constructing process arguments.
-* Sending prompt content through stdin.
-* Capturing stdout and stderr.
+* Validating the configured endpoint.
+* Checking model availability.
+* Constructing API requests.
+* Sending document content as JSON.
+* Enforcing structured output.
+* Handling asynchronous responses.
 * Enforcing timeouts.
-* Handling process cancellation.
-* Reporting exit status.
+* Handling cancellation.
+* Reporting transport and inference failures.
 
-The runner shall not use a shell to construct commands.
+The adapter shall not invoke a shell.
+
+It shall use Neovim's native asynchronous facilities.
+
+The initial implementation may use `vim.system()` to
+invoke `curl`, avoiding an additional Lua HTTP library.
+
+A future native HTTP implementation may replace this
+transport without changing the review controller.
 
 === Finding Validator
 
@@ -252,10 +319,12 @@ Responsible for:
 * JSON decoding.
 * Schema validation.
 * Category and severity validation.
-* Source-text matching.
+* Exact source-text matching.
+* Protected-region rejection.
 * Line and column verification.
 * Duplicate removal.
-* Rejection of unverifiable findings.
+* Rejection of ambiguous source locations.
+* Tracking rejected findings.
 
 === Quickfix Presenter
 
@@ -274,9 +343,10 @@ The proposed public API is:
 require("foundation-review").setup({
   language = "en-GB",
 
-  fm = {
-    executable = "/usr/bin/fm",
-    model = "system",
+  ollama = {
+    url = "http://127.0.0.1:11434",
+    model = "gemma4:12b-it-qat",
+    temperature = 0,
     timeout_ms = 120000,
   },
 
@@ -292,8 +362,7 @@ require("foundation-review").setup({
     spelling = true,
     grammar = true,
     punctuation = true,
-    clarity = true,
-    consistency = true,
+    sentence_readability = true,
   },
 
   review = {
@@ -314,93 +383,126 @@ require("foundation-review").setup({
 The chunk size is an initial character budget,
 not a model token count.
 
-The model shall default to the on-device system model.
+The configured model is provisional pending
+proofreading-specific evaluation.
 
-Cloud models shall not be selectable in the initial release.
-
-== fm CLI Integration
+== Ollama Integration
 
 === Prerequisites
 
 The plugin requires:
 
-* A compatible macOS installation.
-* The native `fm` executable.
-* Acceptance of applicable Apple CLI terms.
-* An available on-device model.
+* Neovim 0.12 or later.
+* A running local Ollama service.
+* An installed compatible language model.
+* Access to the configured loopback endpoint.
 
 The health check shall verify these prerequisites.
 
-=== CLI Discovery
+=== Service Discovery
 
-The following commands illustrate the initial checks:
+Illustrative checks:
 
 [source,bash]
 ----
-command -v fm
-fm --help
-fm respond --help
-fm schema object --help
-fm available
-fm license --status
+command -v ollama
+ollama --version
+ollama list
+curl -sS http://127.0.0.1:11434/api/tags
 ----
 
-Actual command support and options must be checked
-against the installed macOS build.
+The plugin shall report whether the configured model
+is available locally.
 
-=== CLI Invocation
+It shall not automatically download models.
 
-The intended integration uses `fm respond` with:
+=== API Invocation
 
-* An explicit on-device model selection.
+The initial implementation shall use Ollama's
+`/api/generate` endpoint.
+
+Requests shall include:
+
+* Model identifier.
 * Review instructions.
-* A structured generation schema.
-* Document text supplied via stdin.
+* Document content.
+* JSON Schema output constraint.
+* Non-streaming response selection.
+* Temperature zero.
 
-Conceptual command:
+Conceptual request:
 
-[source,bash]
+[source,json]
 ----
-fm respond \
-  --model system \
-  --no-stream \
-  --instructions "Review the supplied prose." \
-  --schema findings.schema.json
+{
+  "model": "gemma4:12b-it-qat",
+  "stream": false,
+  "options": {
+    "temperature": 0
+  },
+  "system": "Proofread British English prose.",
+  "prompt": "Text to review.",
+  "format": {
+    "type": "object",
+    "properties": {
+      "findings": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "original": {"type": "string"},
+            "suggestion": {"type": "string"},
+            "category": {"type": "string"},
+            "message": {"type": "string"}
+          },
+          "required": [
+            "original",
+            "suggestion",
+            "category",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["findings"],
+    "additionalProperties": false
+  }
+}
 ----
 
-The request body is supplied through stdin.
+The production schema shall restrict category values
+to the four supported checks.
 
-The `--no-stream` option is used where supported so
-stdout contains one complete response suitable for
-JSON decoding.
+The response body returned by Ollama contains a
+`response` field holding the model-generated JSON.
 
-The final invocation shall be validated against
-`fm respond --help` on the target machine.
-
-A positional prompt shall not be combined with stdin
-unless that behaviour is explicitly verified.
+The adapter shall decode the transport response first,
+then decode and validate the nested findings document.
 
 === Neovim Process Execution
 
-The plugin shall invoke `fm` asynchronously using
-`vim.system()`.
+The initial transport may invoke `curl` asynchronously
+using `vim.system()`.
 
 Illustrative Lua:
 
 [source,lua]
 ----
-local command = {
-  "/usr/bin/fm",
-  "respond",
-  "--model", "system",
-  "--no-stream",
-  "--instructions", instructions,
-  "--schema", schema_path,
-}
+local payload = vim.json.encode(request)
 
-local process = vim.system(command, {
+local process = vim.system({
+  "curl",
+  "--silent",
+  "--show-error",
+  "--fail-with-body",
+  "--max-time", "120",
+  "--header", "Content-Type: application/json",
+  "--data-binary", "@-",
+  "http://127.0.0.1:11434/api/generate",
+}, {
   text = true,
-  stdin = document_text,
+  stdin = payload,
   timeout = 120000,
 }, function(result)
   vim.schedule(function()
@@ -409,35 +511,24 @@ local process = vim.system(command, {
 end)
 ----
 
-This is an integration pattern, not a complete
-implementation.
+This illustrates the transport mechanism only.
 
-The production implementation shall validate CLI
-compatibility, process status and response contents.
+The production implementation shall validate the
+endpoint, process status, HTTP response and JSON.
+
+No shell interpolation shall be used.
+
+Document contents shall not be placed in command-line
+arguments.
 
 === Schema Handling
 
-The CLI supports guided JSON generation.
+The plugin shall package a versioned JSON Schema.
 
-The plugin shall define a versioned schema for editorial
-findings.
+Schema enforcement improves response consistency but
+does not establish that findings are correct.
 
-A schema compatible with the installed `fm` version
-shall be generated or packaged with the plugin.
-
-Some macOS 27 implementations require additional
-schema metadata such as `x-order`.
-
-The plugin shall test the actual schema against `fm`
-before relying on it.
-
-The schema may be stored as a static plugin resource.
-
-The reviewer's document contents shall not be written
-to a temporary file.
-
-A temporary schema file may be used if required by
-the CLI's schema interface.
+All model output shall undergo deterministic validation.
 
 == Review Data Contract
 
@@ -460,48 +551,103 @@ The canonical internal representation is:
 
 These are original-buffer coordinates after validation.
 
-The model-facing schema may use a simpler representation.
+The model shall not be trusted to calculate source
+line numbers or byte offsets.
 
-In particular, the model should identify the offending
-text rather than be trusted to calculate byte offsets.
+=== Supported Categories
+
+[cols="1,3",options="header"]
+|===
+|Category |Purpose
+
+|`spelling`
+|Misspellings and incorrect spelling variants.
+
+|`grammar`
+|Grammatical errors.
+
+|`punctuation`
+|Incorrect or missing punctuation.
+
+|`sentence_readability`
+|Unwieldy sentence construction requiring an
+advisory rewrite.
+|===
+
+Other categories shall be rejected.
 
 === Model Response
 
-The desired logical response is:
+Example correction:
 
 [source,json]
 ----
 {
   "findings": [
     {
-      "original": "it's",
-      "suggestion": "its",
-      "category": "grammar",
-      "severity": "warning",
-      "message": "Incorrect possessive form."
+      "original": "recieved",
+      "suggestion": "received",
+      "category": "spelling",
+      "message": "Incorrect spelling."
     }
   ]
 }
 ----
 
-The production schema shall constrain values where
-supported by `fm`.
+Example sentence rewrite:
+
+[source,json]
+----
+{
+  "findings": [
+    {
+      "original": "The project was delayed because several dependencies had not been identified during planning, which meant that the implementation could not begin until the outstanding requirements had been reviewed.",
+      "suggestion": "Several dependencies were not identified during planning, delaying the project. Implementation could not begin until the outstanding requirements had been reviewed.",
+      "category": "sentence_readability",
+      "message": "The sentence contains several connected clauses and would be easier to follow if divided."
+    }
+  ]
+}
+----
+
+Sentence-rewrite findings shall quote the complete
+original sentence.
 
 === Source-Location Strategy
 
 The model shall identify an exact offending text span.
 
-The validator shall locate that span within the original
-chunk using deterministic matching.
+The validator shall locate that span within the
+original review chunk using deterministic matching.
 
-If the span appears more than once, additional context
-or a model-supplied line hint may be used to disambiguate.
+A finding shall be rejected when:
 
-If a unique location cannot be established, the finding
-shall not be presented with an invented coordinate.
+* The quotation is not an exact substring.
+* The quotation overlaps protected content.
+* The quotation cannot be located uniquely.
+* The category is unsupported.
+* The finding belongs to a stale review.
 
-The plugin may retain such findings in an incomplete
-review report, but shall not fabricate quickfix locations.
+If a quotation occurs multiple times, the validator
+may use validated chunk context to resolve it.
+
+It shall never invent a location.
+
+Rejected findings shall be counted and reported.
+
+=== Finding Granularity
+
+Each independent spelling, grammar or punctuation
+error should be reported separately.
+
+Sentence-readability findings shall cover complete
+sentences.
+
+The validator shall not assume that a long quotation
+represents a single valid error.
+
+The benchmark shall assess finding granularity
+independently of defect detection.
 
 === Unicode Handling
 
@@ -524,20 +670,21 @@ skinparam shadowing false
 actor Author
 participant Neovim
 participant "Lua Controller" as Lua
-participant "fm CLI" as FM
-participant "On-device Model" as Model
+participant "Ollama Adapter" as Adapter
+participant "Local Ollama Model" as Model
 
 Author -> Neovim : :FoundationReview
 Neovim -> Lua : Start review
 Lua -> Lua : Check filetype
 Lua -> Lua : Snapshot buffer
+Lua -> Lua : Protect markup
 Lua -> Lua : Prepare chunks
 
 loop Each chunk
-  Lua -> FM : Spawn process with stdin
-  FM -> Model : Review prompt
-  Model --> FM : Structured findings
-  FM --> Lua : JSON on stdout
+  Lua -> Adapter : Submit review request
+  Adapter -> Model : JSON inference request
+  Model --> Adapter : Structured response
+  Adapter --> Lua : Parsed findings
   Lua -> Lua : Validate and locate findings
 end
 
@@ -574,27 +721,32 @@ Stale results shall be discarded.
 
 === Context Limits
 
-The on-device model has a finite context window.
+The configured Ollama model has a finite context window.
 
 The plugin shall reserve capacity for:
 
-* System and review instructions.
+* Review instructions.
 * Schema-related overhead.
 * Document text.
 * Generated findings.
 
-The maximum supported input size shall be determined
-through testing on the installed model.
+The model's advertised maximum context shall not
+automatically be used as the operating context.
+
+The practical budget shall be determined experimentally.
 
 === Segmentation Rules
 
 . Prefer section and paragraph boundaries.
 . Avoid splitting sentences where possible.
 . Preserve source line mappings.
-. Exclude protected markup and code.
-. Keep chunks within the measured context budget.
+. Exclude or mask protected markup and code.
+. Keep chunks within the configured context budget.
 . Avoid unnecessary overlapping review regions.
 . Report unreviewable sections explicitly.
+
+A sentence-readability finding requires the complete
+sentence to be present in the reviewed chunk.
 
 === Scheduling
 
@@ -604,8 +756,11 @@ at a time.
 Concurrency may be introduced later if benchmarks
 demonstrate a benefit.
 
-The controller shall aggregate findings only after
-all scheduled chunks have completed or failed.
+The default shall be one general proofreading pass
+per chunk.
+
+The controller shall aggregate findings after
+scheduled chunks complete or fail.
 
 == Quickfix Integration
 
@@ -630,7 +785,7 @@ Each finding shall include:
 * Column number, when verified.
 * Severity type.
 * Category and explanation.
-* Suggested correction.
+* Suggested correction or sentence rewrite.
 
 Findings shall be sorted by source location.
 
@@ -638,40 +793,43 @@ No corrections shall be applied automatically.
 
 == Error Handling
 
-=== Model Unavailable
+=== Service or Model Unavailable
 
 The health check shall distinguish:
 
-* Missing executable.
-* Incompatible CLI.
-* Unaccepted licence terms.
-* Unavailable on-device model.
+* Ollama executable unavailable.
+* Ollama service unavailable.
+* Configured model not installed.
+* Endpoint connection failure.
 * Inference failure.
+* Request timeout.
 
 === Invalid Output
 
 The plugin shall reject:
 
-* Malformed JSON.
+* Malformed transport JSON.
+* Malformed model-generated JSON.
 * Unexpected schema structures.
 * Unsupported severity values.
-* Invalid categories.
+* Unsupported categories.
 * Unverifiable source locations.
+* Findings overlapping protected content.
 * Results from superseded reviews.
 
 === Partial Failure
 
-If one or more chunks fail, the review shall be marked
-incomplete.
+If one or more chunks fail, the review shall be
+marked incomplete.
 
 Successfully validated findings may still be displayed,
-provided the incomplete status is visible to the author.
+provided the incomplete status is visible.
 
 === Cancellation
 
-The controller shall retain the active process handle.
+The controller shall retain the active request handle.
 
-Cancellation shall terminate the process where possible.
+Cancellation shall terminate the request where possible.
 
 The controller shall prevent cancelled or superseded
 requests from publishing results.
@@ -680,27 +838,29 @@ requests from publishing results.
 
 === Local Execution
 
-The plugin shall use the on-device system model.
+The initial implementation shall use a local Ollama
+service bound to loopback.
 
-Cloud inference and automatic cloud fallback are prohibited.
+Remote inference and automatic cloud fallback are
+outside the initial scope.
 
-=== Process Isolation
+=== Transport
 
-The runner shall:
+The adapter shall:
 
-* Invoke the executable directly.
+* Use the configured loopback endpoint.
 * Avoid shell interpolation.
-* Supply document contents via stdin.
-* Validate process exit status.
-* Capture errors without exposing sensitive document text.
+* Send document content in the request body.
+* Validate transport and HTTP status.
 * Never execute generated text.
+* Avoid persisting document contents.
 
 === Prompt Injection
 
 Reviewed documents are untrusted data.
 
-Text within a document must not override the reviewer's
-instructions or request unrelated actions.
+Text within a document must not override the
+proofreading instructions or request unrelated actions.
 
 Model responses shall be treated as untrusted data.
 
@@ -721,6 +881,7 @@ Test:
 * Configuration validation.
 * Filetype eligibility.
 * Document segmentation.
+* Protected-region handling.
 * Source mappings.
 * UTF-8 coordinate conversion.
 * JSON validation.
@@ -732,13 +893,13 @@ Test:
 
 Test:
 
-* `fm` executable discovery.
-* Model availability.
-* Structured schema acceptance.
-* Asynchronous process execution.
-* Valid JSON generation.
+* Ollama service discovery.
+* Configured model availability.
+* Structured JSON output.
+* Asynchronous request execution.
 * Complete review lifecycle.
 * Quickfix navigation.
+* Timeout and cancellation behaviour.
 
 === Test Fixtures
 
@@ -751,20 +912,58 @@ Include:
 * Git commit messages.
 * Unicode and multibyte characters.
 * Repeated identical phrases.
-* Long paragraphs.
+* Long and convoluted sentences.
+* Correct long sentences.
+* Correct British English.
+* Clean passages.
 * Empty buffers.
 * Unsaved changes.
 * Malformed model responses.
+
+=== Proofreading Benchmark
+
+A corpus of approximately 40 passages shall evaluate
+the candidate models.
+
+The benchmark shall prioritise:
+
+. Spelling accuracy.
+. Grammar accuracy.
+. Punctuation accuracy.
+. Sentence-readability judgement.
+. Correction and rewrite quality.
+. False-positive rate.
+. Exact quotation accuracy.
+. Finding granularity.
+. Markup protection.
+. Latency.
+
+The benchmark shall distinguish:
+
+* Detection of a genuine defect.
+* Correct categorisation.
+* Accurate source quotation.
+* Useful suggested correction.
+* Incorrect findings against valid prose.
+
+The initial candidates are:
+
+* `gemma4:12b-it-qat`
+* `qwen3.5:9b-q4_K_M`
+* `qwen3.5:4b-q4_K_M`
+
+The model selection shall remain provisional until
+the corpus has been evaluated.
 
 === Performance Tests
 
 Measure:
 
-* Startup and model availability latency.
-* Time to first response.
+* Model availability latency.
 * Total review time.
+* Generated tokens per second.
 * Memory consumption.
-* Performance across different chunk sizes.
+* Performance across chunk sizes.
 * Behaviour on long documents.
 
 No fixed performance targets shall be imposed until
@@ -777,14 +976,11 @@ and native package installation.
 
 No custom binary compilation shall be required.
 
-The installer shall not download Apple models or attempt
-to bypass platform availability requirements.
-
 The README shall document:
 
-* macOS and Neovim requirements.
-* `fm` prerequisites.
-* Apple CLI licence acceptance.
+* Neovim requirements.
+* Ollama installation and availability.
+* Supported model configuration.
 * Plugin installation.
 * Filetype configuration.
 * Review commands.
@@ -793,20 +989,20 @@ The README shall document:
 
 == Delivery Plan
 
-=== Phase 1: CLI Feasibility
+=== Phase 1: Ollama Feasibility
 
-* Confirm `fm` availability.
-* Verify on-device model operation.
-* Confirm CLI syntax.
+* Confirm Ollama availability.
+* Verify model operation.
 * Test structured JSON generation.
 * Validate the findings schema.
 * Measure context and output limits.
-* Evaluate editorial accuracy.
+* Evaluate proofreading accuracy.
+* Compare shortlisted models.
 
 Exit criterion:
 
-A shell invocation returns valid structured findings
-for a representative text document.
+A local request returns valid, source-verifiable
+proofreading findings for representative text.
 
 === Phase 2: Minimal Neovim Plugin
 
@@ -814,7 +1010,7 @@ for a representative text document.
 * Register user commands.
 * Enforce filetype allowlist.
 * Capture buffer snapshots.
-* Invoke `fm` asynchronously.
+* Invoke Ollama asynchronously.
 * Parse structured responses.
 * Populate the quickfix list.
 
@@ -830,6 +1026,7 @@ A supported buffer can be reviewed end to end.
 * Validate exact text locations.
 * Implement cancellation.
 * Detect stale results.
+* Support complete-sentence rewrite findings.
 
 Exit criterion:
 
@@ -838,32 +1035,32 @@ invalid quickfix locations or unwanted modifications.
 
 === Phase 4: Hardening and Release
 
-* Add automated tests.
+* Complete automated tests.
 * Implement health checks.
 * Improve error handling.
-* Benchmark performance.
+* Run the proofreading benchmark.
 * Document installation and configuration.
-* Prepare initial public release.
+* Prepare the initial public release.
 
 Exit criterion:
 
 The plugin is documented, reproducible and reliable
-on its supported macOS environment.
+for its four supported proofreading capabilities.
 
 == Open Technical Questions
 
-The feasibility phase shall resolve:
+The implementation and evaluation phases shall resolve:
 
-. Which `fm` options are supported by the installed build?
-. What schema restrictions apply to nested findings arrays?
-. What is the practical context budget for document review?
+. What practical context budget should be configured?
 . Can the model reliably identify exact offending text?
 . How often are source spans ambiguous?
-. What is the latency of repeated CLI invocations?
-. How does the model perform with British English?
-. How reliably does it respect protected markup?
-. Does chunking materially affect editorial consistency?
-. What additional constraints arise from Apple's CLI terms?
+. Which model best handles British English grammar?
+. Which model has the lowest false-positive rate?
+. How reliably does the model detect punctuation errors?
+. Can sentence rewrites preserve technical meaning?
+. How reliably does the model respect protected markup?
+. Does chunking affect proofreading accuracy?
+. What review latency is acceptable for normal use?
 
-These questions shall be answered experimentally before
-expanding the implementation.
+These questions shall be answered experimentally
+before expanding the implementation scope.

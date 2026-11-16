@@ -5,56 +5,62 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.2
+:revnumber: 0.3
 :revdate: 2026-11-16
 
 == Executive Summary
 
 *Foundation Review* (`foundation-review.nvim`) is a
-lightweight Neovim plugin providing AI-assisted editorial
-review of text and markup documents using Apple's on-device
-Foundation Models.
+lightweight Neovim plugin providing AI-assisted proofreading
+of prose and markup documents.
 
-The plugin invokes the native macOS `fm` command-line utility
-and presents actionable findings through Neovim's quickfix
-list.
+Its primary responsibilities are:
 
-It requires no custom Swift application, external inference
-server, cloud API, or API credentials.
+* Spelling.
+* Grammar.
+* Punctuation.
+* Detection and suggested rewriting of unwieldy sentences.
 
-The plugin is intended to complement existing spelling and
-grammar tools, particularly Harper LSP, by identifying
-contextual editorial issues that deterministic language
-checkers may overlook.
+The plugin uses a locally hosted language model through
+Ollama and presents findings through Neovim's native
+quickfix list.
+
+The initial model is `gemma4:12b-it-qat`, subject to
+further proofreading-specific evaluation.
+
+All application-specific logic is implemented in Lua.
+No custom Swift application, cloud API, external account
+or additional application service is required.
+
+The plugin complements conventional language tools,
+including Harper LSP, without attempting to replace
+their continuous diagnostics.
 
 == Problem Statement
 
-Traditional spelling and grammar tools are effective at
-detecting mechanical language errors but are less capable
-of assessing:
+Traditional spelling and grammar tools provide useful
+mechanical checks, but some grammatical errors depend
+on context and are difficult to detect reliably.
 
-* Ambiguous or unclear wording.
-* Awkward sentence construction.
-* Unnecessary repetition.
-* Inconsistent terminology.
-* Problems with readability and expression.
-* Context-dependent grammatical issues.
+They may also struggle to recognise sentences that are
+grammatically valid but unnecessarily long or convoluted.
 
-General-purpose AI assistants provide these capabilities
-but frequently introduce unnecessary infrastructure,
-provider configuration, conversational interfaces, and
-potential privacy concerns.
+General-purpose AI assistants can help, but introduce
+unnecessary interaction and may suggest changes outside
+the author's intended scope.
 
-A purpose-built Neovim plugin can deliver contextual
-editorial review without disrupting the author's workflow.
+Foundation Review addresses this problem through a
+focused, on-demand proofreading workflow integrated
+with Neovim.
 
 == Vision
 
-Provide a local, unobtrusive editorial reviewer that works
-with Neovim's existing editing and navigation facilities.
+Provide a local, unobtrusive proofreader that identifies
+language errors and difficult sentence construction
+without interfering with the author's writing process.
 
-The author invokes a review, examines findings, and decides
-whether to make corrections.
+The author invokes a review, examines the findings and
+decides whether to make corrections.
 
 The reviewer advises; the author retains control.
 
@@ -63,15 +69,17 @@ The reviewer advises; the author retains control.
 The project shall:
 
 . Integrate natively with Neovim using Lua.
-. Use Apple's on-device Foundation Models through `fm`.
-. Operate without network connectivity.
+. Use local inference through Ollama.
+. Operate without external network connectivity.
 . Support text and markup document formats.
-. Restrict operation to configured Neovim filetypes.
+. Restrict operation to configured filetypes.
 . Analyse unsaved buffer contents.
 . Support complete-buffer and visual-selection reviews.
 . Use British English by default.
-. Return structured editorial findings.
-. Present findings through the native quickfix list.
+. Detect spelling, grammar and punctuation errors.
+. Identify unwieldy sentences and suggest restructuring.
+. Return structured findings.
+. Present findings through native quickfix.
 . Preserve accurate source locations.
 . Execute asynchronously.
 . Never modify document contents automatically.
@@ -81,35 +89,71 @@ The project shall:
 
 === In Scope
 
-The initial implementation will support:
+The initial implementation shall support:
 
-* Spelling and word-choice suggestions.
-* Grammar and punctuation review.
-* Sentence clarity and readability.
-* Identification of ambiguity and repetition.
-* Terminology and stylistic consistency.
-* Configurable editorial review categories.
-* Filetype-specific review instructions.
+* British English spelling checks.
+* Context-sensitive grammatical checks.
+* Punctuation checks.
+* Detection of excessively long or convoluted sentences.
+* Suggested rewrites of flagged sentences.
+* Filetype-specific protection of non-prose content.
 * Document segmentation for model context limits.
+* Exact-source finding validation.
 * Quickfix navigation.
 * Review cancellation.
-* Health and availability checks.
+* Model and service availability checks.
+
+=== Sentence Readability
+
+Sentence readability is a deliberately limited
+extension of proofreading.
+
+A long sentence is not necessarily a defective sentence.
+
+The reviewer shall identify sentences whose construction
+makes them unnecessarily difficult to understand.
+
+Suggested corrections may:
+
+* Divide a sentence into shorter sentences.
+* Simplify unnecessarily complicated syntax.
+* Remove structural complexity where meaning is preserved.
+* Improve punctuation supporting sentence structure.
+
+The reviewer shall not:
+
+* Flag sentences solely because they exceed a word count.
+* Remove factual details.
+* Change technical terminology unnecessarily.
+* Change the author's intended meaning.
+* Rewrite otherwise acceptable prose for stylistic reasons.
+
+A sentence rewrite shall be reported as an advisory
+suggestion, not a definite grammatical error.
 
 === Out of Scope
 
-The initial release will not include:
+The initial release shall not include:
 
-* Automatic document rewriting.
-* Automatic application of suggested corrections.
+* General stylistic editing.
+* Document-wide rewriting.
+* General clarity or concision analysis outside
+  unwieldy sentence construction.
+* Ambiguity analysis as an independent review category.
+* Redundancy and repetition analysis as independent checks.
+* Logical consistency checking.
+* Terminology consistency analysis.
+* Fact-checking.
+* Automatic application of corrections.
 * Cloud inference.
-* Alternative LLM providers.
-* Ollama integration.
 * A conversational interface.
 * Continuous inference while typing.
 * A custom Language Server Protocol implementation.
 * Retrieval-augmented generation.
-* External fact-checking.
 * Document rendering or publishing.
+
+Additional editorial capabilities require an explicit
+scope decision and are not implied by the use of an LLM.
 
 == Target Environment
 
@@ -118,10 +162,10 @@ The initial release will not include:
 |Component |Requirement
 
 |Operating system
-|macOS 27 or later with compatible `fm` CLI
+|macOS, with Apple Silicon as the initial target
 
 |Hardware
-|Apple Intelligence-compatible Apple Silicon
+|Mac Studio M1 Ultra, 128 GB unified memory
 
 |Editor
 |Neovim 0.12 or later
@@ -130,26 +174,31 @@ The initial release will not include:
 |Lua
 
 |Inference interface
-|Native macOS `fm` CLI
+|Ollama local HTTP API
 
-|Inference model
-|Apple on-device system model
+|Initial model
+|`gemma4:12b-it-qat`
+
+|Alternative model
+|`qwen3.5:9b-q4_K_M`
 
 |Presentation
 |Neovim quickfix list
 
 |Runtime dependencies
-|Neovim, macOS `fm`, available system model
+|Neovim and Ollama
 
-|Network dependency
-|None for on-device inference
+|External network dependency
+|None during local inference
 |===
 
-The plugin shall explicitly select or verify the on-device
-model and shall not silently fall back to cloud inference.
+Model names are configuration values rather than
+hard-coded application dependencies.
 
-Model availability and applicable Apple software terms
-must be checked before operation.
+The initial implementation shall use Ollama exclusively.
+
+Apple Foundation Models is not an initial backend,
+following comparative feasibility testing.
 
 == User Experience
 
@@ -159,11 +208,11 @@ must be checked before operation.
 . Execute `:FoundationReview`.
 . The plugin captures the current buffer contents.
 . The document is divided into reviewable sections.
-. Each section is submitted to `fm`.
+. Each section is submitted to the local Ollama model.
 . Structured findings are validated and consolidated.
 . The quickfix list is populated and opened.
 . The author navigates through the findings.
-. Corrections are made manually.
+. Corrections or rewrites are made manually.
 
 === Proposed Commands
 
@@ -181,28 +230,42 @@ must be checked before operation.
 |Cancel the active review.
 
 |`:FoundationReviewHealth`
-|Check CLI availability, configuration and model status.
+|Check Ollama availability, configuration and model status.
 |===
 
 The command names constitute the proposed public API.
+
+=== Finding Types
+
+The plugin shall distinguish between two finding types.
+
+Correction::
+A localised spelling, grammar or punctuation error,
+with an exact source quotation and suggested correction.
+
+Sentence rewrite::
+An unwieldy sentence, with the complete original
+sentence and an advisory replacement.
+
+Both finding types shall use quickfix.
 
 === Example Quickfix Output
 
 [source,text]
 ----
 article.adoc|24 col 18| W: Grammar: "it's" -> "its"
-article.adoc|47 col 1| I: Clarity: Split long sentence
+article.adoc|47 col 1| I: Sentence: Consider splitting sentence
 article.adoc|83 col 12| W: Spelling: "organize" -> "organise"
 ----
 
 Severity classifications:
 
-* `E` — High-confidence mechanical error.
-* `W` — Likely issue requiring attention.
-* `I` — Editorial suggestion.
+* `E` -- High-confidence mechanical error.
+* `W` -- Likely language error requiring attention.
+* `I` -- Advisory sentence rewrite.
 
-Severity reflects the nature of the finding, not a
-statistically calibrated model confidence score.
+Severity shall not be presented as a statistically
+calibrated model confidence score.
 
 == Filetype Configuration
 
@@ -216,6 +279,13 @@ Example:
 require("foundation-review").setup({
   language = "en-GB",
 
+  ollama = {
+    url = "http://127.0.0.1:11434",
+    model = "gemma4:12b-it-qat",
+    timeout_ms = 120000,
+    temperature = 0,
+  },
+
   filetypes = {
     asciidoc = true,
     markdown = true,
@@ -228,8 +298,7 @@ require("foundation-review").setup({
     spelling = true,
     grammar = true,
     punctuation = true,
-    clarity = true,
-    consistency = true,
+    sentence_readability = true,
   },
 
   quickfix = {
@@ -270,21 +339,33 @@ The reviewer shall never modify the buffer automatically.
 
 All findings remain advisory.
 
+=== British English
+
+British English shall be the default language convention.
+
+Valid British spelling, punctuation and grammatical
+constructions shall not be flagged merely because they
+differ from American English.
+
+British collective-noun agreement shall be treated
+according to context rather than rejected categorically.
+
 === Authorial Voice
 
-The model shall be instructed to preserve the author's
-meaning, tone, terminology and intended style.
+The model shall preserve the author's meaning, tone,
+terminology and intended style.
 
-Unnecessary rewriting shall be discouraged.
+Sentence rewrites shall make only the changes needed
+to improve construction and readability.
 
 === Local Privacy
 
-Document content shall be processed by the on-device
-model only.
+Document content shall be sent only to the configured
+local Ollama endpoint during initial operation.
 
-No cloud fallback shall be permitted.
+No automatic cloud fallback shall be permitted.
 
-No document contents shall be written to diagnostic
+Document contents shall not be written to diagnostic
 logs by default.
 
 === Complementary Language Tools
@@ -292,9 +373,12 @@ logs by default.
 Foundation Review complements Harper LSP and similar
 language tools.
 
-Harper provides continuous deterministic diagnostics.
+Harper provides continuous language diagnostics.
 
-Foundation Review provides deliberate contextual analysis.
+Foundation Review provides deliberate, context-sensitive
+proofreading and sentence restructuring.
+
+The plugin shall not require Harper to be installed.
 
 === Manual Invocation
 
@@ -317,8 +401,8 @@ start
 if (Configured filetype?) then (Yes)
   :Invoke review;
   :Capture buffer snapshot;
-  :Segment document;
-  :Invoke local fm CLI;
+  :Protect markup and segment prose;
+  :Invoke local Ollama model;
   :Validate structured findings;
   :Populate quickfix list;
   :Navigate findings;
@@ -345,6 +429,8 @@ stop
 * Large documents shall be segmented.
 * Review cancellation shall be supported.
 * Excessive concurrent model requests shall be avoided.
+* A general review shall use one inference pass per chunk
+  unless evaluation justifies additional passes.
 
 === Reliability
 
@@ -353,51 +439,102 @@ stop
 * Results shall be checked against the buffer snapshot.
 * Model unavailability shall produce actionable errors.
 * Partial review failures shall be reported.
-* No findings shall be silently fabricated or discarded.
+* Rejected findings shall be counted and reported.
+* No findings shall be fabricated.
 
 === Security
 
-* The plugin shall invoke a known local executable.
-* Shell command interpolation shall be avoided.
+* The plugin shall connect only to a configured
+  loopback Ollama endpoint in the initial release.
 * Document text shall be treated as untrusted input.
 * Model output shall never be executed as code.
-* No document text shall be sent to cloud services.
+* No automatic cloud fallback shall be permitted.
 * No persistent plaintext temporary files shall be required.
 
 === Maintainability
 
-* The implementation shall remain Lua-first.
+* The implementation shall remain Lua-only.
 * Neovim-native APIs shall be preferred.
-* The `fm` invocation shall be isolated in one module.
+* Ollama integration shall be isolated in one module.
 * Filetype adapters shall be independently testable.
 * Third-party runtime dependencies shall be minimised.
+* Additional editorial categories shall not be introduced
+  without an explicit scope decision.
 
 == Success Criteria
 
 The proof of concept succeeds when:
 
-. `fm` availability can be verified.
-. The on-device model can review a short document.
-. Structured findings can be parsed reliably.
+. Ollama and the configured model can be verified.
+. A short document produces valid structured findings.
+. British English spelling is handled correctly.
+. Representative grammar errors are identified.
+. Representative punctuation errors are identified.
+. Unwieldy sentences receive useful advisory rewrites.
+. Correct British English produces acceptably few
+  false-positive findings.
 . A supported Neovim buffer can be reviewed.
 . Unsaved changes are included in the review.
 . Findings appear in the quickfix list.
-. Navigation reaches the correct source locations.
+. Navigation reaches verified source locations.
+. Protected markup is not reported as prose.
 . Unsupported filetypes are rejected.
 . No document content is modified automatically.
-. The workflow functions without network connectivity.
+. The workflow functions without external connectivity.
+
+== Model Evaluation
+
+The initial model selection is provisional.
+
+The existing local comparison demonstrates that
+`gemma4:12b-it-qat` is a promising candidate for
+structured language review.
+
+However, the comparison used one passage and three
+prompt variants, with substantial emphasis on editorial
+capabilities outside the revised project scope.
+
+The final selection shall use a proofreading-specific
+corpus of approximately 40 passages.
+
+The corpus shall include:
+
+* Spelling errors.
+* Grammar errors.
+* Punctuation errors.
+* Unwieldy sentences.
+* Correct British English.
+* Clean passages containing no errors.
+* AsciiDoc markup and protected regions.
+* Repeated source phrases.
+* Technical prose.
+
+Evaluation shall measure:
+
+* Precision and false-positive rate.
+* Recall by supported category.
+* Correction quality.
+* Sentence-rewrite usefulness.
+* Exact-source quotation accuracy.
+* Finding granularity.
+* Markup protection.
+* Review latency.
+
+Model fit and parameter count alone shall not determine
+the selection.
 
 == Future Enhancements
 
 Potential later capabilities include:
 
-* Review profiles for different writing styles.
 * Project-specific terminology dictionaries.
 * Optional inline diagnostics.
 * Selective correction application.
 * Incremental review of changed sections.
 * Review of multiple buffers.
 * Configurable severity thresholds.
-* Exportable editorial reports.
 
 These are not requirements for the initial release.
+
+General editorial analysis remains explicitly outside
+the agreed scope unless separately authorised.
