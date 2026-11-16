@@ -1,0 +1,931 @@
+
+= Foundation Review: Architecture and Design Guide
+:toc:
+:toclevels: 4
+:sectnums:
+:icons: font
+:source-highlighter: rouge
+
+== Architecture Overview
+
+Foundation Review follows a lightweight, two-component
+architecture:
+
+. A Lua Neovim plugin providing editor integration.
+. A native Swift executable providing model inference.
+
+The components communicate using JSON over standard
+input and standard output.
+
+The Swift executable runs as a local child process.
+No persistent HTTP server or network transport is required.
+
+== Architectural Principles
+
+The design follows these principles:
+
+* Local-first processing.
+* Separation of editor and inference responsibilities.
+* Minimal dependencies.
+* Explicit filetype activation.
+* Non-destructive review.
+* Asynchronous execution.
+* Structured, versioned interfaces.
+* Predictable failure handling.
+* Extensibility without premature abstraction.
+
+== Logical Architecture
+
+[plantuml,foundation-review-architecture,svg]
+----
+@startuml
+skinparam componentStyle rectangle
+skinparam monochrome true
+skinparam shadowing false
+
+package "Neovim Process" {
+  [User Commands] as Commands
+  [Review Controller] as Controller
+  [Configuration] as Config
+  [Filetype Adapters] as Adapters
+  [Chunk Manager] as Chunk
+  [Quickfix Presenter] as Quickfix
+  [Process Runner] as Runner
+}
+
+package "Native Swift Process" {
+  [JSON Protocol Handler] as Protocol
+  [Review Engine] as Engine
+  [Structured Output Mapper] as Mapper
+}
+
+cloud "Apple Foundation Models" {
+  [SystemLanguageModel] as Model
+}
+
+Commands --> Controller
+Config --> Controller
+Controller --> Adapters
+Controller --> Chunk
+Controller --> Runner
+Runner --> Protocol : JSON stdin/stdout
+Protocol --> Engine
+Engine --> Model
+Model --> Engine
+Engine --> Mapper
+Mapper --> Protocol
+Controller --> Quickfix
+
+@enduml
+----
+
+== Component Responsibilities
+
+=== Lua Plugin
+
+The Lua component owns:
+
+* Plugin configuration and validation.
+* User command registration.
+* Filetype eligibility.
+* Buffer and selection extraction.
+* Document segmentation.
+* Buffer snapshot tracking.
+* Asynchronous process execution.
+* Response validation.
+* Source-location mapping.
+* Quickfix presentation.
+* Cancellation and error reporting.
+
+It shall not implement model inference.
+
+=== Swift Helper
+
+The Swift component owns:
+
+* Foundation Models framework integration.
+* Model availability checking.
+* Prompt construction.
+* Structured response generation.
+* Model-level error handling.
+* Conversion to the agreed JSON response schema.
+
+It shall not depend on Neovim.
+
+=== Foundation Models
+
+The model performs contextual editorial analysis.
+
+The design uses Apple's native Foundation Models APIs,
+including structured generation where supported.
+
+The built-in model is a relatively small on-device model.
+Its context, output and inference capabilities must be
+measured rather than assumed.
+
+== Physical Architecture
+
+[plantuml,foundation-review-deployment,svg]
+----
+@startuml
+skinparam monochrome true
+skinparam shadowing false
+
+node "macOS / Apple Silicon" {
+  node "Neovim" {
+    artifact "foundation-review.nvim\nLua plugin" as Lua
+  }
+
+  node "Child Process" {
+    artifact "foundation-review\nSwift executable" as Swift
+  }
+
+  node "Apple Intelligence Runtime" {
+    component "Foundation Models" as FM
+  }
+
+  Lua --> Swift : stdin/stdout\nJSON
+  Swift --> FM : Native Swift API
+}
+
+@enduml
+----
+
+== Repository Structure
+
+[source,text]
+----
+foundation-review.nvim/
+├── lua/
+│   └── foundation-review/
+│       ├── init.lua
+│       ├── config.lua
+│       ├── commands.lua
+│       ├── review.lua
+│       ├── adapters.lua
+│       ├── chunk.lua
+│       ├── runner.lua
+│       ├── protocol.lua
+│       └── quickfix.lua
+├── plugin/
+│   └── foundation-review.lua
+├── swift/
+│   ├── Package.swift
+│   └── Sources/
+│       └── FoundationReview/
+│           ├── main.swift
+│           ├── ReviewEngine.swift
+│           ├── ReviewModels.swift
+│           └── ProtocolHandler.swift
+├── tests/
+│   ├── lua/
+│   ├── fixtures/
+│   └── integration/
+├── doc/
+│   └── foundation-review.txt
+├── README.adoc
+└── LICENSE
+----
+
+The structure may be simplified during implementation.
+Modules should be introduced only when they provide
+a meaningful separation of responsibility.
+
+== Configuration Design
+
+=== Public Lua API
+
+The plugin exposes:
+
+[source,lua]
+----
+require("foundation-review").setup({
+  language = "en-GB",
+
+  filetypes = {
+    asciidoc = true,
+    markdown = true,
+    text = true,
+    typst = true,
+    gitcommit = true,
+  },
+
+  checks = {
+    spelling = true,
+    grammar = true,
+    punctuation = true,
+    clarity = true,
+    consistency = true,
+  },
+
+  quickfix = {
+    auto_open = true,
+  },
+
+  review = {
+    chunk_size = 2500,
+    overlap = 0,
+  },
+
+  keymaps = {
+    review = "<leader>ar",
+  },
+})
+----
+
+`chunk_size` represents a provisional character budget,
+not a guaranteed model token count.
+
+Configuration values shall be validated at setup time.
+
+=== Filetype Resolution
+
+The plugin obtains the active filetype using:
+
+[source,lua]
+----
+vim.bo[bufnr].filetype
+----
+
+Eligibility is evaluated against the configured allowlist.
+
+Filetype-specific settings may override global defaults.
+
+Example:
+
+[source,lua]
+----
+filetype_settings = {
+  asciidoc = {
+    adapter = "asciidoc",
+    preserve_markup = true,
+  },
+
+  markdown = {
+    adapter = "markdown",
+    preserve_markup = true,
+  },
+
+  text = {
+    adapter = "plain",
+  },
+}
+----
+
+The adapter names represent internal plugin components,
+not separate third-party dependencies.
+
+== Review Lifecycle
+
+=== Sequence Diagram
+
+[plantuml,foundation-review-sequence,svg]
+----
+@startuml
+skinparam monochrome true
+skinparam shadowing false
+
+actor Author
+participant Neovim
+participant "Lua Review Controller" as Lua
+participant "Swift Helper" as Swift
+participant "Foundation Models" as Model
+
+Author -> Neovim : :FoundationReview
+Neovim -> Lua : Start review
+
+Lua -> Lua : Validate filetype
+Lua -> Lua : Snapshot buffer
+Lua -> Lua : Prepare chunks
+
+loop Each document chunk
+  Lua -> Swift : JSON review request
+  Swift -> Model : Analyse prose
+  Model --> Swift : Structured findings
+  Swift --> Lua : JSON response
+end
+
+Lua -> Lua : Validate and map findings
+Lua -> Lua : Check buffer snapshot
+
+alt Buffer unchanged
+  Lua -> Neovim : Populate quickfix
+  Neovim --> Author : Display findings
+else Buffer changed
+  Lua -> Neovim : Report stale review
+end
+
+@enduml
+----
+
+=== Snapshot Consistency
+
+A review operates against a fixed buffer snapshot.
+
+The controller records:
+
+* Buffer number.
+* Buffer changedtick.
+* Buffer name.
+* Filetype.
+* Original line contents.
+* Review request identifier.
+
+Before publishing results, the controller verifies that
+the buffer still exists and its changedtick matches
+the captured value.
+
+Results from modified or deleted buffers shall not
+be presented as current findings.
+
+=== Asynchronous Execution
+
+Neovim invokes the helper using `vim.system()`.
+
+The process receives JSON through stdin and returns
+JSON through stdout.
+
+Standard error is reserved for diagnostic information.
+
+The plugin shall:
+
+* Avoid blocking waits on the main editor thread.
+* Track active process handles.
+* Support process termination.
+* Capture exit codes.
+* Apply configurable execution timeouts.
+* Discard responses from superseded requests.
+
+== JSON Interface
+
+=== Protocol Requirements
+
+The Lua/Swift interface shall be:
+
+* JSON-based.
+* Versioned.
+* Independent of Neovim internals.
+* Explicit about source coordinates.
+* Validated at both boundaries.
+
+The protocol uses one request and one response per
+process invocation in the initial implementation.
+
+=== Example Request
+
+[source,json]
+----
+{
+  "protocol_version": 1,
+  "request_id": "review-001",
+  "operation": "review",
+  "language": "en-GB",
+  "filetype": "asciidoc",
+  "checks": [
+    "spelling",
+    "grammar",
+    "punctuation",
+    "clarity",
+    "consistency"
+  ],
+  "content": {
+    "start_line": 20,
+    "text": "This is an example of it's incorrect usage."
+  }
+}
+----
+
+`start_line` is one-based and identifies the first source
+line represented by the supplied text.
+
+=== Example Response
+
+[source,json]
+----
+{
+  "protocol_version": 1,
+  "request_id": "review-001",
+  "status": "ok",
+  "findings": [
+    {
+      "line": 1,
+      "column": 23,
+      "end_column": 27,
+      "severity": "warning",
+      "category": "grammar",
+      "message": "Incorrect possessive form.",
+      "original": "it's",
+      "suggestion": "its"
+    }
+  ]
+}
+----
+
+Response coordinates are relative to the submitted chunk.
+
+Lines and columns are one-based.
+
+Column offsets shall use UTF-8 byte indexing to match
+Neovim's buffer and quickfix conventions.
+
+The helper must explicitly convert any native Swift
+string positions to the protocol's coordinate system.
+
+=== Error Response
+
+[source,json]
+----
+{
+  "protocol_version": 1,
+  "request_id": "review-001",
+  "status": "error",
+  "error": {
+    "code": "MODEL_UNAVAILABLE",
+    "message": "The on-device model is unavailable."
+  }
+}
+----
+
+Potential error codes include:
+
+* `MODEL_UNAVAILABLE`
+* `INVALID_REQUEST`
+* `UNSUPPORTED_OPERATION`
+* `GENERATION_FAILED`
+* `INVALID_MODEL_OUTPUT`
+* `REVIEW_CANCELLED`
+* `INTERNAL_ERROR`
+
+Timeout and process-launch failures may be generated
+by the Lua controller rather than the Swift helper.
+
+== Structured Model Output
+
+=== Review Finding Model
+
+The Swift implementation should use Foundation Models'
+guided generation facilities to produce structured findings.
+
+A conceptual Swift type is:
+
+[source,swift]
+----
+@Generable
+struct ReviewFinding {
+    @Guide(description: "One-based source line")
+    var line: Int
+
+    @Guide(description: "One-based source column")
+    var column: Int
+
+    @Guide(description: "Review category")
+    var category: String
+
+    @Guide(description: "Issue explanation")
+    var message: String
+
+    @Guide(description: "Suggested correction")
+    var suggestion: String
+}
+----
+
+This is an illustrative model definition.
+
+The production schema should constrain categories and
+severity using supported typed representations.
+
+Generated positions must be validated against the
+submitted source text.
+
+=== Review Instructions
+
+The system instructions shall direct the model to:
+
+. Review only prose content.
+. Use the configured language convention.
+. Preserve the author's intended meaning.
+. Avoid unnecessary stylistic changes.
+. Preserve technical terminology.
+. Distinguish errors from editorial preferences.
+. Return concise, actionable findings.
+. Avoid inventing text not present in the source.
+. Respect markup boundaries and protected content.
+
+Document text is untrusted data.
+
+Instructions appearing within the document must not
+override the reviewer's operating instructions.
+
+== Document Segmentation
+
+=== Rationale
+
+The on-device model has bounded context and output
+capacity.
+
+Large documents must therefore be divided into chunks.
+
+=== Strategy
+
+The initial segmentation strategy shall:
+
+. Preserve original source line numbering.
+. Prefer paragraph boundaries.
+. Avoid splitting sentences where possible.
+. Respect configured character budgets.
+. Keep markup directives and protected blocks intact.
+. Review each chunk independently.
+. Reassemble findings into document coordinates.
+
+Where paragraph boundaries cannot satisfy the budget,
+the implementation may split at sentence boundaries.
+
+Chunks that cannot be safely segmented shall be reported
+rather than silently truncated.
+
+=== Filetype Adapters
+
+Adapters prepare content for review.
+
+Their responsibilities include:
+
+* Identifying prose regions.
+* Excluding code and metadata.
+* Preserving source locations.
+* Providing markup-specific instructions.
+
+Initial adapters:
+
+[cols="1,3",options="header"]
+|===
+|Adapter |Responsibilities
+
+|Plain text
+|Paragraph and sentence segmentation.
+
+|AsciiDoc
+|Protect attributes, directives, source blocks,
+cross-references and structural markup.
+
+|Markdown
+|Protect fenced code, frontmatter, links and markup.
+
+|Typst
+|Protect syntax, expressions and code regions.
+
+|Git commit
+|Review subject and body while preserving conventional
+commit metadata where applicable.
+|===
+
+Initial implementation may support a generic adapter
+with specialised adapters added incrementally.
+
+=== Source Mapping
+
+Source mapping must not depend on the model reproducing
+the original text exactly.
+
+The Lua controller maintains an explicit mapping between
+submitted chunk lines and original buffer lines.
+
+For simple contiguous chunks:
+
+[source,text]
+----
+original_line = chunk_start_line + finding.line - 1
+----
+
+Column positions require validation against the
+corresponding original line.
+
+For filtered or transformed content, adapters shall
+provide explicit source-coordinate mappings.
+
+Unverifiable locations shall be omitted or reported
+as non-navigable findings.
+
+== Quickfix Integration
+
+The plugin uses Neovim's native quickfix API.
+
+[source,lua]
+----
+vim.fn.setqflist({}, "r", {
+  title = "Foundation Review",
+  items = findings,
+})
+
+vim.cmd("copen")
+----
+
+Each quickfix item contains:
+
+* `bufnr`
+* `lnum`
+* `col`
+* `end_col`, when known
+* `type`
+* `text`
+
+Findings shall be sorted by source position.
+
+The presentation layer shall translate severity and
+category into readable quickfix messages.
+
+Example:
+
+[source,text]
+----
+W [grammar] Incorrect possessive: "it's" -> "its"
+----
+
+The quickfix list shall not automatically modify
+the document.
+
+== Error Handling
+
+=== Model Unavailable
+
+The plugin shall report model availability failures
+without crashing or blocking Neovim.
+
+The health command should distinguish between:
+
+* Missing Swift executable.
+* Unsupported macOS environment.
+* Apple Intelligence model unavailable.
+* Model generation failure.
+
+=== Invalid Findings
+
+The controller shall reject findings with:
+
+* Invalid line numbers.
+* Out-of-range columns.
+* Unknown severity values.
+* Invalid protocol versions.
+* Missing mandatory fields.
+
+Valid findings from the same response may still be
+retained when individual findings are invalid.
+
+=== Partial Review Failure
+
+A document may contain multiple chunks.
+
+If one chunk fails, the controller shall report that
+the review is incomplete.
+
+Successful findings may be presented with an explicit
+partial-results indication.
+
+=== Cancellation
+
+Cancellation shall terminate the active child process.
+
+The controller shall ensure that terminated or superseded
+requests cannot publish stale results.
+
+== Security Architecture
+
+=== Trust Boundaries
+
+The primary trust boundaries are:
+
+. Neovim to the local Swift process.
+. Swift to the on-device model.
+. Model-generated output back to Neovim.
+
+Document content and model output are both untrusted.
+
+=== Controls
+
+* Execute a known local helper binary.
+* Avoid shell-based command construction.
+* Pass input using stdin.
+* Validate all JSON responses.
+* Bound request and response sizes.
+* Apply process timeouts.
+* Never execute model-generated commands.
+* Never interpret suggestions as Lua or shell code.
+* Do not log document content by default.
+* Do not create temporary plaintext files unnecessarily.
+
+== Build and Distribution
+
+=== Swift Build
+
+The helper shall be built using Swift Package Manager.
+
+The build shall target a macOS version supporting the
+required Foundation Models APIs.
+
+The project shall provide a reproducible build command
+and document its toolchain requirements.
+
+=== Plugin Installation
+
+The plugin shall support standard Neovim plugin managers
+and native package installation.
+
+The Lua plugin should locate the helper using a
+configurable executable path.
+
+The initial release may require an explicit Swift build.
+
+Automatic binary downloads are not required.
+
+=== Health Check
+
+`:FoundationReviewHealth` shall report:
+
+* Plugin version.
+* Neovim version.
+* macOS version.
+* Swift helper location and version.
+* Protocol compatibility.
+* Foundation Models availability.
+* Active filetype configuration.
+
+== Testing Strategy
+
+=== Lua Unit Tests
+
+Test:
+
+* Configuration validation.
+* Filetype eligibility.
+* Chunk boundaries.
+* Source-coordinate mapping.
+* Quickfix item construction.
+* Stale-result detection.
+* Cancellation state management.
+
+=== Swift Unit Tests
+
+Test:
+
+* Request decoding.
+* Protocol validation.
+* Response encoding.
+* Structured finding conversion.
+* Coordinate conversion.
+* Error handling.
+
+Model inference shall be abstracted sufficiently to
+permit tests using deterministic mock responses.
+
+=== Integration Tests
+
+Test the complete flow:
+
+. Open a fixture document.
+. Invoke the review command.
+. Execute the Swift helper.
+. Receive structured findings.
+. Populate the quickfix list.
+. Navigate to the original source location.
+
+=== Representative Fixtures
+
+Test documents should include:
+
+* Plain English prose.
+* British and American spelling variants.
+* AsciiDoc source blocks and attributes.
+* Markdown fenced code.
+* Unicode and multibyte characters.
+* Long paragraphs.
+* Documents exceeding a single model context.
+* Empty and whitespace-only buffers.
+* Unsaved changes.
+* Deliberately malformed markup.
+
+== Delivery Plan
+
+=== Phase 1: Technical Feasibility
+
+* Verify Foundation Models availability.
+* Build a minimal Swift inference executable.
+* Test structured editorial findings.
+* Measure context and response limitations.
+* Verify source-location accuracy.
+
+Exit criterion:
+
+A Swift executable can review a short document and
+return valid structured JSON.
+
+=== Phase 2: Neovim Integration
+
+* Implement Lua plugin setup.
+* Register review commands.
+* Implement filetype allowlist.
+* Capture buffer snapshots.
+* Execute the Swift helper asynchronously.
+* Populate the quickfix list.
+
+Exit criterion:
+
+A supported Neovim buffer can be reviewed end to end.
+
+=== Phase 3: Document Handling
+
+* Implement paragraph-aware segmentation.
+* Preserve source coordinates.
+* Introduce format adapters.
+* Add stale-result detection.
+* Add cancellation and timeouts.
+
+Exit criterion:
+
+Long documents and markup content can be reviewed
+without corrupting locations or modifying source text.
+
+=== Phase 4: Hardening
+
+* Add automated tests.
+* Improve error reporting.
+* Implement health checks.
+* Measure performance and resource consumption.
+* Document installation and configuration.
+* Prepare the initial public release.
+
+Exit criterion:
+
+The plugin is reproducible, documented and reliable
+on the supported macOS environment.
+
+== Architecture Decisions
+
+=== ADR-001: Native Swift Integration
+
+Decision::
+Use a compiled Swift helper rather than an HTTP server.
+
+Rationale::
+The helper provides direct access to Apple's native
+framework with minimal operational overhead.
+
+=== ADR-002: JSON over Standard Streams
+
+Decision::
+Use JSON over stdin/stdout.
+
+Rationale::
+This provides a simple, language-independent interface
+without sockets or persistent services.
+
+=== ADR-003: Native Neovim Quickfix
+
+Decision::
+Use the quickfix list as the primary presentation mechanism.
+
+Rationale::
+It provides established navigation and requires no
+additional UI dependencies.
+
+=== ADR-004: Explicit Filetype Allowlist
+
+Decision::
+Review only configured filetypes.
+
+Rationale::
+Prevents unintended processing of source code and other
+content outside the author's selected document types.
+
+=== ADR-005: Non-Destructive Operation
+
+Decision::
+Do not apply model-generated corrections automatically.
+
+Rationale::
+Preserves authorial control and prevents unwanted changes.
+
+=== ADR-006: No Runtime Cloud Dependencies
+
+Decision::
+Use only Apple's local Foundation Models framework.
+
+Rationale::
+Maintains privacy, offline operation and predictable
+deployment dependencies.
+
+== Open Technical Questions
+
+The feasibility phase must establish:
+
+. Whether the built-in model is available on the target Mac.
+. The practical maximum review chunk size.
+. The reliability of structured output.
+. The accuracy of generated line and column positions.
+. The performance cost of repeated model sessions.
+. Whether model sessions should be reused within one review.
+. How reliably the model follows British English conventions.
+. Whether the model can distinguish markup from prose.
+. Whether source-location accuracy requires deterministic
+  text matching rather than model-generated coordinates.
+
+These questions should be resolved experimentally before
+committing to more elaborate implementation.
