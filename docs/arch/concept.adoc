@@ -5,8 +5,8 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.3
-:revdate: 2026-11-16
+:revnumber: 0.6
+:revdate: 2026-11-17
 
 == Executive Summary
 
@@ -68,6 +68,9 @@ The reviewer advises; the author retains control.
 
 The project shall:
 
+[cols="1,1",frame=none, grid=none]
+|===
+a|
 . Integrate natively with Neovim using Lua.
 . Use local inference through Ollama.
 . Operate without external network connectivity.
@@ -76,7 +79,9 @@ The project shall:
 . Analyse unsaved buffer contents.
 . Support complete-buffer and visual-selection reviews.
 . Use British English by default.
+a|[start=9]
 . Detect spelling, grammar and punctuation errors.
+. Identify structure, word-choice and consistency issues.
 . Identify unwieldy sentences and suggest restructuring.
 . Return structured findings.
 . Present findings through native quickfix.
@@ -84,24 +89,33 @@ The project shall:
 . Execute asynchronously.
 . Never modify document contents automatically.
 . Require minimal installation and configuration.
+|===
 
 == Scope
 
 === In Scope
 
-The initial implementation shall support:
+The implementation supports:
 
+[cols="1,1",frame=none,grid=none]
+|===
+a|
 * British English spelling checks.
 * Context-sensitive grammatical checks.
 * Punctuation checks.
+* Sentence-structure checks.
+* Context-sensitive word-choice checks.
+* Document usage consistency checks.
 * Detection of excessively long or convoluted sentences.
 * Suggested rewrites of flagged sentences.
 * Filetype-specific protection of non-prose content.
+a|
 * Document segmentation for model context limits.
 * Exact-source finding validation.
 * Quickfix navigation.
 * Review cancellation.
 * Model and service availability checks.
+|===
 
 === Sentence Readability
 
@@ -113,13 +127,16 @@ A long sentence is not necessarily a defective sentence.
 The reviewer shall identify sentences whose construction
 makes them unnecessarily difficult to understand.
 
+[cols="1,1",frame=none, grid=none]
+|===
+a|
 Suggested corrections may:
 
 * Divide a sentence into shorter sentences.
 * Simplify unnecessarily complicated syntax.
 * Remove structural complexity where meaning is preserved.
 * Improve punctuation supporting sentence structure.
-
+a|
 The reviewer shall not:
 
 * Flag sentences solely because they exceed a word count.
@@ -127,6 +144,7 @@ The reviewer shall not:
 * Change technical terminology unnecessarily.
 * Change the author's intended meaning.
 * Rewrite otherwise acceptable prose for stylistic reasons.
+|===
 
 A sentence rewrite shall be reported as an advisory
 suggestion, not a definite grammatical error.
@@ -135,6 +153,9 @@ suggestion, not a definite grammatical error.
 
 The initial release shall not include:
 
+[cols="1,1",frame=none, grid=none]
+|===
+a|
 * General stylistic editing.
 * Document-wide rewriting.
 * General clarity or concision analysis outside
@@ -142,7 +163,8 @@ The initial release shall not include:
 * Ambiguity analysis as an independent review category.
 * Redundancy and repetition analysis as independent checks.
 * Logical consistency checking.
-* Terminology consistency analysis.
+* Project-wide terminology-policy enforcement.
+a|
 * Fact-checking.
 * Automatic application of corrections.
 * Cloud inference.
@@ -151,6 +173,7 @@ The initial release shall not include:
 * A custom Language Server Protocol implementation.
 * Retrieval-augmented generation.
 * Document rendering or publishing.
+|===
 
 Additional editorial capabilities require an explicit
 scope decision and are not implied by the use of an LLM.
@@ -195,12 +218,23 @@ scope decision and are not implied by the use of an LLM.
 Model names are configuration values rather than
 hard-coded application dependencies.
 
-The initial implementation shall use Ollama exclusively.
+The implementation uses Ollama exclusively.
 
 Apple Foundation Models is not an initial backend,
 following comparative feasibility testing.
 
 == User Experience
+
+=== Implementation Status
+
+The runnable plugin has been verified in a clean Neovim
+session and against the configured local Ollama model.
+
+The live review produced source-precise spelling and grammar
+quickfix entries with verified byte ranges. Automated tests
+cover module loading, configuration, command registration,
+source mapping, protected markup, response decoding,
+cancellation, stale results, partial failure and hard limits.
 
 === Normal Workflow
 
@@ -214,7 +248,7 @@ following comparative feasibility testing.
 . The author navigates through the findings.
 . Corrections or rewrites are made manually.
 
-=== Proposed Commands
+=== Commands
 
 [cols="2,3",options="header"]
 |===
@@ -223,9 +257,6 @@ following comparative feasibility testing.
 |`:FoundationReview`
 |Review the current buffer.
 
-|`:FoundationReviewSelection`
-|Review a selected range.
-
 |`:FoundationReviewCancel`
 |Cancel the active review.
 
@@ -233,19 +264,20 @@ following comparative feasibility testing.
 |Check Ollama availability, configuration and model status.
 |===
 
-The command names constitute the proposed public API.
+These commands constitute the implemented command API.
 
 === Finding Types
 
 The plugin shall distinguish between two finding types.
 
 Correction::
-A localised spelling, grammar or punctuation error,
-with an exact source quotation and suggested correction.
+A localised spelling, grammar, punctuation, word-choice
+or consistency error, with an exact source quotation and
+suggested correction.
 
 Sentence rewrite::
-An unwieldy sentence, with the complete original
-sentence and an advisory replacement.
+An unwieldy or structurally deficient sentence, with the
+complete original sentence and an advisory replacement.
 
 Both finding types shall use quickfix.
 
@@ -260,9 +292,15 @@ article.adoc|83 col 12| W: Spelling: "organize" -> "organise"
 
 Severity classifications:
 
-* `E` -- High-confidence mechanical error.
-* `W` -- Likely language error requiring attention.
-* `I` -- Advisory sentence rewrite.
+* `W` -- Localised correction.
+* `I` -- Advisory readability or structure rewrite.
+
+Severity is derived from the finding type, never from
+the model response.
+
+`E` is not used, because the model supplies no
+calibrated confidence signal from which a higher
+severity could be derived.
 
 Severity shall not be presented as a statistically
 calibrated model confidence score.
@@ -290,8 +328,6 @@ require("foundation-review").setup({
     asciidoc = true,
     markdown = true,
     text = true,
-    typst = true,
-    gitcommit = true,
   },
 
   checks = {
@@ -299,6 +335,14 @@ require("foundation-review").setup({
     grammar = true,
     punctuation = true,
     sentence_readability = true,
+    structure = true,
+    word_choice = true,
+    consistency = true,
+  },
+
+  review = {
+    chunk_size = 2500,
+    hard_limit = 12000,
   },
 
   quickfix = {
@@ -324,12 +368,13 @@ Examples include:
 
 * AsciiDoc attributes and source blocks.
 * Markdown fenced code and frontmatter.
-* Typst expressions and code.
-* Git commit metadata.
 * URLs, references and document directives.
 
 The plugin shall not assume that all text in a buffer
 is natural-language prose.
+
+Typst and RTF are deferred until dedicated parsers can
+produce reviewable prose with reversible source-byte maps.
 
 == Review Principles
 
@@ -463,16 +508,23 @@ stop
 
 == Success Criteria
 
-The proof of concept succeeds when:
+The implemented proof of concept has demonstrated:
 
+[cols="1,1",frame=none, grid=none]
+|===
+a|
 . Ollama and the configured model can be verified.
 . A short document produces valid structured findings.
 . British English spelling is handled correctly.
 . Representative grammar errors are identified.
 . Representative punctuation errors are identified.
+. Representative structure and word-choice problems are
+  identified.
+. Inconsistent document usage is identified.
 . Unwieldy sentences receive useful advisory rewrites.
 . Correct British English produces acceptably few
   false-positive findings.
+a|[start=10]
 . A supported Neovim buffer can be reviewed.
 . Unsaved changes are included in the review.
 . Findings appear in the quickfix list.
@@ -481,6 +533,10 @@ The proof of concept succeeds when:
 . Unsupported filetypes are rejected.
 . No document content is modified automatically.
 . The workflow functions without external connectivity.
+|===
+
+The remaining release work is hardening rather than proving
+the core editor-to-model-to-quickfix workflow.
 
 == Model Evaluation
 
@@ -497,18 +553,24 @@ capabilities outside the revised project scope.
 The final selection shall use a proofreading-specific
 corpus of approximately 40 passages.
 
+[cols="1,1",frame=none,grid=none]
+|===
+a|
 The corpus shall include:
 
 * Spelling errors.
 * Grammar errors.
 * Punctuation errors.
 * Unwieldy sentences.
+* Structure errors.
+* Word-choice errors.
+* Inconsistent document usage.
 * Correct British English.
 * Clean passages containing no errors.
 * AsciiDoc markup and protected regions.
 * Repeated source phrases.
 * Technical prose.
-
+a|
 Evaluation shall measure:
 
 * Precision and false-positive rate.
@@ -519,6 +581,7 @@ Evaluation shall measure:
 * Finding granularity.
 * Markup protection.
 * Review latency.
+|===
 
 Model fit and parameter count alone shall not determine
 the selection.

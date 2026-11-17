@@ -1,0 +1,12 @@
+= Sentence Readability Test Passage
+
+This passage contains long, convoluted sentences that should be split.
+
+Original unwieldy sentence:
+
+The project was delayed because several dependencies had not been
+identified during planning which meant that the implementation could
+not begin until the outstanding requirements had been reviewed and
+approved by management which took an additional two weeks.
+
+A shorter, clearer version would be easier to read.

@@ -1,0 +1,46 @@
+*foundation-review.txt*  Local Ollama proofreading for Neovim
+
+=============================================================================
+CONTENTS                                              *foundation-review*
+
+1. Introduction                         |foundation-review-introduction|
+2. Setup                                |foundation-review-setup|
+3. Commands                          |foundation-review-commands|
+
+=============================================================================
+1. INTRODUCTION                          *foundation-review-introduction*
+
+Foundation Review checks prose with a configured local Ollama model and
+places source-verified findings in the quickfix list.
+
+Supported filetypes are `text`, `markdown` and `asciidoc`.
+
+=============================================================================
+2. SETUP                                        *foundation-review-setup*
+
+>lua
+  require("foundation-review").setup({
+    ollama = {
+      url = "http://127.0.0.1:11434",
+      model = "gemma4:12b-it-qat",
+    },
+  })
+<
+
+=============================================================================
+3. COMMANDS                                  *foundation-review-commands*
+
+                                                *:FoundationReview*
+:FoundationReview
+        Review the current buffer and replace the Foundation Review quickfix
+        list when the review completes.
+
+                                          *:FoundationReviewCancel*
+:FoundationReviewCancel
+        Cancel the active review for the current buffer.
+
+                                          *:FoundationReviewHealth*
+:FoundationReviewHealth
+        Check whether Ollama and the configured model are available.
+
+vim:tw=78:ts=8:noet:ft=help:norl:

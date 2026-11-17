@@ -1,0 +1,8 @@
+= Spelling Test Passage
+
+This passage contains several speling errors for testing purposes.
+
+The auter wants to test that the plugin can find misspelled words like
+recieved, definetly, and agenst.
+
+A proper British English test should include colour and organise.

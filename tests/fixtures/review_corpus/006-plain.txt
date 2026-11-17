@@ -1,0 +1,9 @@
+= Plain Text Test
+
+This is a simple plain text passage for testing.
+
+The quick brown fox jumps over the lazy dog.
+
+Spelling: recieve, definately, agenst
+Grammar: him and me went, they was
+Punctuation: lets go, its fine

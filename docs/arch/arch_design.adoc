@@ -5,20 +5,24 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.3
-:revdate: 2026-11-16
+:revnumber: 0.6
+:revdate: 2026-11-17
 
 == Architecture Overview
 
 Foundation Review is a Lua-based Neovim plugin providing
 on-demand British English proofreading through Ollama.
 
-The initial release supports four checks:
+The initial release supports seven checks:
 
 * Spelling.
 * Grammar.
 * Punctuation.
 * Unwieldy sentence detection and suggested restructuring.
+* Sentence-structure problems.
+* Inappropriate or commonly confused word choices.
+* Inconsistent spelling, capitalisation, hyphenation or
+  terminology within a document.
 
 The solution comprises three logical layers:
 
@@ -31,6 +35,27 @@ All application-specific logic resides in Lua.
 No custom Swift executable, Python runtime, custom HTTP
 server or additional persistent application service
 is required.
+
+=== Implementation Status
+
+The implemented plugin provides:
+
+* A stable `setup()`, `review()`, `cancel()` and `health()`
+  public API.
+* `FoundationReview`, `FoundationReviewCancel` and
+  `FoundationReviewHealth` commands.
+* Asynchronous, sequential Ollama requests.
+* A packaged seven-category JSON Schema.
+* Plain text, Markdown and AsciiDoc adapters.
+* Length-preserving markup masking and per-byte source maps.
+* Exact and whitespace-collapsed quotation validation.
+* Cancellation, stale-buffer rejection and partial-failure
+  handling.
+* Source-verified quickfix start and end positions.
+* Headless tests and a verified real-Ollama review path.
+
+Typst and RTF remain deferred until dedicated parsers can
+provide reversible source mappings.
 
 Ollama itself is the local inference service.
 
@@ -129,28 +154,29 @@ foundation-review.nvim/
 │   └── foundation-review/
 │       ├── init.lua
 │       ├── config.lua
-│       ├── commands.lua
-│       ├── review.lua
+│       ├── controller.lua
+│       ├── health.lua
 │       ├── ollama.lua
 │       ├── prompt.lua
 │       ├── schema.lua
-│       ├── chunk.lua
 │       ├── adapters.lua
+│       ├── locator.lua
+│       ├── markup.lua
 │       ├── validate.lua
 │       └── quickfix.lua
 ├── plugin/
 │   └── foundation-review.lua
 ├── tests/
-│   ├── unit/
-│   ├── integration/
+│   ├── minimal_init.lua
+│   ├── run.lua
 │   ├── fixtures/
 │   └── benchmark/
 ├── doc/
 │   └── foundation-review.txt
 ├── README.adoc
-├── concept.adoc
-├── arch_design.adoc
-├── adr.adoc
+├── docs/arch/
+├── TODO.adoc
+├── stylua.toml
 └── LICENSE
 ----
 
@@ -161,37 +187,47 @@ is required.
 
 === Configuration Module
 
+[cols="1,1",frame=none,grid=none]
+|===
+a|
 Responsible for:
 
 * Default settings.
 * User configuration validation.
-* Filetype allowlists.
+* Filetype allow lists.
 * Filetype-specific overrides.
-* The four supported proofreading checks.
+a|
+* The seven supported proofreading checks.
 * British English conventions.
 * Ollama endpoint and model selection.
 * Timeout and chunk-size settings.
 * Quickfix presentation preferences.
+|===
 
 === Review Controller
 
+[cols="1,1",frame=none, grid=none]
+|===
+a|
 Responsible for:
 
 * Review lifecycle.
 * Buffer snapshot creation.
 * Request identification.
 * Chunk scheduling.
+a|
 * Result aggregation.
 * Cancellation.
 * Stale-result detection.
 * Error reporting.
+|===
 
 === Filetype Adapters
 
 Responsible for identifying reviewable prose and
 protecting structural markup.
 
-Initial adapters:
+Implemented adapters:
 
 [cols="1,3",options="header"]
 |===
@@ -207,12 +243,10 @@ references and structural markup.
 |Markdown
 |Protect fenced code, frontmatter and markup.
 
-|Typst
-|Protect expressions and code regions.
-
-|Git commit
-|Preserve commit structure and metadata.
 |===
+
+Typst and RTF are deferred. Each requires a parser that can
+produce reviewable prose and a reversible source-byte map.
 
 Adapters shall retain mappings to original buffer
 coordinates.
@@ -239,10 +273,21 @@ Length-preserving masking may be used where practical.
 Otherwise, explicit transformed-to-original offset
 maps are required.
 
+The implemented offset map is a per-chunk array indexed by
+review-text byte position. Each value is the corresponding
+absolute byte position in the captured buffer text.
+
+Inline masking shall preserve byte length, padded with
+a repeated filler character, so that the column delta
+within a line remains zero.
+
+Line breaks remain unchanged during masking so line and
+column calculations remain stable.
+
 A model finding shall never be accepted solely because
 its quotation matches a sentinel.
 
-=== Chunk Manager
+=== Chunk Management
 
 Responsible for:
 
@@ -251,8 +296,8 @@ Responsible for:
 * Source-line preservation.
 * Chunk identification.
 * Sentence-boundary preservation.
-* Optional surrounding context.
-* Result consolidation.
+* Hard-limit reporting.
+* Result consolidation by the controller.
 
 Chunk boundaries shall prefer paragraphs and sections.
 
@@ -262,8 +307,9 @@ Unwieldy sentences should remain intact where possible,
 because sentence restructuring requires the complete
 sentence.
 
-Chunks that cannot be safely represented shall generate
-an explicit warning rather than be silently truncated.
+Sentences above the configured hard limit are not submitted
+to Ollama. They are counted as unreviewable sections and
+make the review incomplete.
 
 === Prompt Module
 
@@ -272,13 +318,14 @@ Responsible for constructing model instructions.
 Instructions shall specify:
 
 * British English by default.
-* Spelling, grammar, punctuation and sentence readability.
+* All seven categories defined by ADR-026.
 * No unrelated editorial analysis.
 * Preservation of meaning and authorial voice.
 * Respect for technical terminology.
 * Protection of markup and source code.
 * Exact quotations from the supplied text.
 * One independent finding per error.
+* A `type` of `correction` or `rewrite`.
 * Complete sentences for sentence-rewrite findings.
 * No response to instructions embedded in reviewed text.
 
@@ -306,8 +353,8 @@ The adapter shall not invoke a shell.
 
 It shall use Neovim's native asynchronous facilities.
 
-The initial implementation may use `vim.system()` to
-invoke `curl`, avoiding an additional Lua HTTP library.
+The implementation uses `vim.system()` to invoke `curl`
+without shell interpolation or command-line document text.
 
 A future native HTTP implementation may replace this
 transport without changing the review controller.
@@ -318,13 +365,15 @@ Responsible for:
 
 * JSON decoding.
 * Schema validation.
-* Category and severity validation.
+* Category and type validation.
+* Type and category coupling.
+* Severity derivation.
 * Exact source-text matching.
 * Protected-region rejection.
 * Line and column verification.
 * Duplicate removal.
 * Rejection of ambiguous source locations.
-* Tracking rejected findings.
+* Tracking rejected findings by reason.
 
 === Quickfix Presenter
 
@@ -336,7 +385,7 @@ additional UI dependency.
 
 == Configuration Design
 
-The proposed public API is:
+The public API is:
 
 [source,lua]
 ----
@@ -354,8 +403,6 @@ require("foundation-review").setup({
     asciidoc = true,
     markdown = true,
     text = true,
-    typst = true,
-    gitcommit = true,
   },
 
   checks = {
@@ -363,10 +410,14 @@ require("foundation-review").setup({
     grammar = true,
     punctuation = true,
     sentence_readability = true,
+    structure = true,
+    word_choice = true,
+    consistency = true,
   },
 
   review = {
     chunk_size = 2500,
+    hard_limit = 12000,
     max_concurrent = 1,
   },
 
@@ -380,8 +431,8 @@ require("foundation-review").setup({
 })
 ----
 
-The chunk size is an initial character budget,
-not a model token count.
+The chunk size and hard limit are byte budgets, not model
+token counts.
 
 The configured model is provisional pending
 proofreading-specific evaluation.
@@ -397,7 +448,8 @@ The plugin requires:
 * An installed compatible language model.
 * Access to the configured loopback endpoint.
 
-The health check shall verify these prerequisites.
+The implemented health command checks endpoint access and
+configured model availability through `/api/tags`.
 
 === Service Discovery
 
@@ -418,8 +470,7 @@ It shall not automatically download models.
 
 === API Invocation
 
-The initial implementation shall use Ollama's
-`/api/generate` endpoint.
+The implementation uses Ollama's `/api/generate` endpoint.
 
 Requests shall include:
 
@@ -437,6 +488,7 @@ Conceptual request:
 {
   "model": "gemma4:12b-it-qat",
   "stream": false,
+  "think": false,
   "options": {
     "temperature": 0
   },
@@ -450,12 +502,14 @@ Conceptual request:
         "items": {
           "type": "object",
           "properties": {
+            "type": {"type": "string"},
             "original": {"type": "string"},
             "suggestion": {"type": "string"},
             "category": {"type": "string"},
             "message": {"type": "string"}
           },
           "required": [
+            "type",
             "original",
             "suggestion",
             "category",
@@ -471,14 +525,26 @@ Conceptual request:
 }
 ----
 
-The production schema shall restrict category values
-to the four supported checks.
+The production schema shall restrict `category` to the
+seven supported checks and `type` to `correction` or
+`rewrite`.
 
 The response body returned by Ollama contains a
 `response` field holding the model-generated JSON.
 
 The adapter shall decode the transport response first,
 then decode and validate the nested findings document.
+
+A nested value that decodes to a further string shall
+be decoded once more.
+
+An empty or undecodable `response` field shall fail the
+chunk and shall never be treated as an absence of
+findings.
+
+Models that support a thinking channel require
+`think` to be set to `false`, otherwise the `response`
+field can be empty.
 
 === Neovim Process Execution
 
@@ -542,6 +608,7 @@ The canonical internal representation is:
   "line": 24,
   "column": 18,
   "severity": "warning",
+  "type": "correction",
   "category": "grammar",
   "message": "Incorrect possessive form.",
   "original": "it's",
@@ -553,6 +620,14 @@ These are original-buffer coordinates after validation.
 
 The model shall not be trusted to calculate source
 line numbers or byte offsets.
+
+`line`, `column` and `severity` are derived by the
+plugin.
+
+The model supplies only `type`, `category`, `original`,
+`suggestion` and `message`.
+
+The contract is fixed by ADR-021 and revised by ADR-026.
 
 === Supported Categories
 
@@ -572,9 +647,26 @@ line numbers or byte offsets.
 |`sentence_readability`
 |Unwieldy sentence construction requiring an
 advisory rewrite.
+
+|`structure`
+|Clause or phrase arrangement that impairs comprehension
+and requires an advisory rewrite.
+
+|`word_choice`
+|A locally inappropriate, commonly confused or
+contextually incorrect word.
+
+|`consistency`
+|Inconsistent spelling, capitalisation, hyphenation or
+terminology within the reviewed document.
 |===
 
 Other categories shall be rejected.
+
+`sentence_readability` and `structure` findings use type
+`rewrite`.
+
+The other five categories use type `correction`.
 
 === Model Response
 
@@ -585,6 +677,7 @@ Example correction:
 {
   "findings": [
     {
+      "type": "correction",
       "original": "recieved",
       "suggestion": "received",
       "category": "spelling",
@@ -601,6 +694,7 @@ Example sentence rewrite:
 {
   "findings": [
     {
+      "type": "rewrite",
       "original": "The project was delayed because several dependencies had not been identified during planning, which meant that the implementation could not begin until the outstanding requirements had been reviewed.",
       "suggestion": "Several dependencies were not identified during planning, delaying the project. Implementation could not begin until the outstanding requirements had been reviewed.",
       "category": "sentence_readability",
@@ -618,22 +712,31 @@ original sentence.
 The model shall identify an exact offending text span.
 
 The validator shall locate that span within the
-original review chunk using deterministic matching.
+reviewable text of the chunk that produced it.
 
 A finding shall be rejected when:
 
-* The quotation is not an exact substring.
+* The quotation is not an exact match.
+* The quotation occurs more than once.
 * The quotation overlaps protected content.
-* The quotation cannot be located uniquely.
 * The category is unsupported.
+* `type` and `category` are inconsistently paired.
 * The finding belongs to a stale review.
 
-If a quotation occurs multiple times, the validator
-may use validated chunk context to resolve it.
+Where an exact match fails, one whitespace-collapsing
+pass is permitted, and that pass shall also produce
+exactly one match.
+
+Repeated quotations are therefore rejected as
+ambiguous rather than resolved by preference.
 
 It shall never invent a location.
 
-Rejected findings shall be counted and reported.
+Rejected findings shall be counted by reason and
+reported.
+
+The matching rules and reason codes are fixed by
+ADR-021.
 
 === Finding Granularity
 
@@ -748,10 +851,19 @@ The practical budget shall be determined experimentally.
 A sentence-readability finding requires the complete
 sentence to be present in the reviewed chunk.
 
+A single sentence that exceeds the chunk budget shall
+be reviewed alone, without neighbouring text.
+
+If it still exceeds the hard context limit, it shall be
+divided at clause boundaries and sentence-readability
+findings shall be suppressed for that sentence.
+
+The suppression shall be reported as an unreviewable
+sentence rather than applied silently.
+
 === Scheduling
 
-The initial implementation shall process one chunk
-at a time.
+The implementation processes one chunk at a time.
 
 Concurrency may be introduced later if benchmarks
 demonstrate a benefit.
@@ -782,9 +894,9 @@ Each finding shall include:
 
 * Buffer number.
 * Line number.
-* Column number, when verified.
+* Verified start and end byte columns.
 * Severity type.
-* Category and explanation.
+* Finding type, category and explanation.
 * Suggested correction or sentence rewrite.
 
 Findings shall be sorted by source location.
@@ -795,14 +907,13 @@ No corrections shall be applied automatically.
 
 === Service or Model Unavailable
 
-The health check shall distinguish:
+The health command distinguishes:
 
-* Ollama executable unavailable.
 * Ollama service unavailable.
 * Configured model not installed.
-* Endpoint connection failure.
-* Inference failure.
-* Request timeout.
+
+Review execution separately reports transport failure,
+invalid responses and request timeout as failed chunks.
 
 === Invalid Output
 
@@ -810,10 +921,13 @@ The plugin shall reject:
 
 * Malformed transport JSON.
 * Malformed model-generated JSON.
+* Empty or undecodable `response` fields.
 * Unexpected schema structures.
-* Unsupported severity values.
+* Unrecognised `type` values.
 * Unsupported categories.
+* Inconsistently paired `type` and `category` values.
 * Unverifiable source locations.
+* Quotations that occur more than once.
 * Findings overlapping protected content.
 * Results from superseded reviews.
 
@@ -908,8 +1022,6 @@ Include:
 * Plain text.
 * AsciiDoc with attributes and source blocks.
 * Markdown with fenced code.
-* Typst markup.
-* Git commit messages.
 * Unicode and multibyte characters.
 * Repeated identical phrases.
 * Long and convoluted sentences.
@@ -931,6 +1043,9 @@ The benchmark shall prioritise:
 . Grammar accuracy.
 . Punctuation accuracy.
 . Sentence-readability judgement.
+. Structure judgement.
+. Word-choice accuracy.
+. Consistency accuracy.
 . Correction and rewrite quality.
 . False-positive rate.
 . Exact quotation accuracy.
@@ -987,65 +1102,31 @@ The README shall document:
 * Quickfix navigation.
 * Troubleshooting.
 
-== Delivery Plan
+== Delivery Status
 
-=== Phase 1: Ollama Feasibility
+=== Completed: Runnable Plugin
 
-* Confirm Ollama availability.
-* Verify model operation.
-* Test structured JSON generation.
-* Validate the findings schema.
-* Measure context and output limits.
-* Evaluate proofreading accuracy.
-* Compare shortlisted models.
+* Setup, configuration and user commands.
+* Filetype allowlist and buffer snapshots.
+* Asynchronous sequential Ollama requests.
+* Packaged structured-response schema.
+* Deterministic source validation and quickfix output.
+* Cancellation, stale-result protection and partial failure.
+* Plain text, Markdown and AsciiDoc handling.
+* Automated headless tests and real-Ollama verification.
+* Installation, configuration and Vim help documentation.
 
-Exit criterion:
+=== Before First Tagged Release
 
-A local request returns valid, source-verifiable
-proofreading findings for representative text.
+* Expand markup edge-case fixtures.
+* Exercise real timeout and `curl` failure paths.
+* Pin CI to a supported stable Neovim release.
 
-=== Phase 2: Minimal Neovim Plugin
+=== Final Phase: Language Benchmark
 
-* Implement setup and configuration.
-* Register user commands.
-* Enforce filetype allowlist.
-* Capture buffer snapshots.
-* Invoke Ollama asynchronously.
-* Parse structured responses.
-* Populate the quickfix list.
-
-Exit criterion:
-
-A supported buffer can be reviewed end to end.
-
-=== Phase 3: Document Handling
-
-* Add section-aware chunking.
-* Implement source mapping.
-* Introduce format adapters.
-* Validate exact text locations.
-* Implement cancellation.
-* Detect stale results.
-* Support complete-sentence rewrite findings.
-
-Exit criterion:
-
-Long and structured documents can be reviewed without
-invalid quickfix locations or unwanted modifications.
-
-=== Phase 4: Hardening and Release
-
-* Complete automated tests.
-* Implement health checks.
-* Improve error handling.
-* Run the proofreading benchmark.
-* Document installation and configuration.
-* Prepare the initial public release.
-
-Exit criterion:
-
-The plugin is documented, reproducible and reliable
-for its four supported proofreading capabilities.
+Run the seven-category proofreading benchmark only after
+release hardening is complete. Model selection remains
+provisional until the benchmark has been evaluated.
 
 == Open Technical Questions
 

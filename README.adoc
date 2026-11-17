@@ -1,0 +1,163 @@
+
+= Foundation Review for Neovim
+
+Foundation Review is a Neovim plugin for on-demand British
+English proofreading with a local Ollama model.
+
+It reviews prose without sending document contents to a cloud
+service and publishes verified findings to Neovim's quickfix
+list.
+
+== Status
+
+The plugin is under active development.
+
+The current implementation supports plain text, Markdown and
+AsciiDoc buffers. Typst and RTF require dedicated parsers and
+are not yet supported.
+
+The complete Neovim-to-Ollama-to-quickfix path has been
+verified with the default model. The automated headless suite
+also verifies loading, configuration, source mapping, markup
+masking, validation, cancellation, stale-result handling,
+partial failure and hard-limit reporting.
+
+== Checks
+
+* Spelling.
+* Grammar.
+* Punctuation.
+* Sentence readability.
+* Sentence structure.
+* Word choice.
+* Consistency of spelling, capitalisation, hyphenation and
+  terminology within the reviewed document.
+
+== Requirements
+
+* Neovim 0.12 or later.
+* A local Ollama service.
+* An installed model that supports structured output.
+* `curl` available in `PATH`.
+
+The provisional default model is `gemma4:12b-it-qat`.
+The plugin never downloads models.
+
+== Installation
+
+=== vim.pack
+
+[source,lua]
+----
+vim.pack.add({
+  "https://github.com/macdaddie/foundation-review.nvim",
+})
+
+require("foundation-review").setup()
+----
+
+=== lazy.nvim and LazyVim
+
+[source,lua]
+----
+{
+  "macdaddie/foundation-review.nvim",
+  opts = {},
+}
+----
+
+=== Native packages
+
+[source,bash]
+----
+git clone https://github.com/macdaddie/foundation-review.nvim \
+  ~/.local/share/nvim/site/pack/vendor/start/foundation-review.nvim
+----
+
+Then configure the plugin in `init.lua`:
+
+[source,lua]
+----
+require("foundation-review").setup()
+----
+
+== Configuration
+
+[source,lua]
+----
+require("foundation-review").setup({
+  language = "en-GB",
+  ollama = {
+    url = "http://127.0.0.1:11434",
+    model = "gemma4:12b-it-qat",
+    timeout_ms = 120000,
+  },
+  filetypes = {
+    asciidoc = true,
+    markdown = true,
+    text = true,
+  },
+  review = {
+    chunk_size = 2500,
+    hard_limit = 12000,
+  },
+  quickfix = {
+    auto_open = true,
+  },
+  keymaps = {
+    review = "<leader>ar",
+  },
+})
+----
+
+== Commands
+
+`FoundationReview`::
+Review the current buffer.
+
+`FoundationReviewCancel`::
+Cancel the active review for the current buffer.
+
+`FoundationReviewHealth`::
+Check whether the configured Ollama model is available.
+
+Findings are advisory and are never applied automatically.
+
+Quickfix entries contain source-verified start and end byte
+positions. Corrections use warning severity and advisory
+readability or structure rewrites use information severity.
+
+If one chunk fails, findings from successful chunks remain
+available and the quickfix context marks the review incomplete.
+
+== Development
+
+Run the headless Neovim test suite from the repository root:
+
+[source,bash]
+----
+nvim --headless -u tests/minimal_init.lua -i NONE -l tests/run.lua
+----
+
+Validate the architecture documents with:
+
+[source,bash]
+----
+for file in docs/arch/*.adoc; do
+  asciidoctor -o /dev/null "$file"
+done
+----
+
+The language-quality benchmark remains deliberately deferred
+until release hardening is complete.
+
+== Privacy
+
+Reviewed buffer contents are sent only to the configured Ollama
+endpoint. The default endpoint is local loopback. No cloud
+fallback is implemented.
+
+== Licence
+
+Foundation Review is released under the MIT Licence. See
+link:LICENSE[LICENSE].

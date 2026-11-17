@@ -1,0 +1,48 @@
+local config_module = require("foundation-review.config")
+
+local M = {}
+local current_config = config_module.merge({})
+
+function M.setup(options)
+  options = options or {}
+
+  local valid, err = config_module.validate(options)
+  if not valid then
+    error("foundation-review: " .. err)
+  end
+
+  current_config = config_module.merge(options)
+
+  local mapping = current_config.keymaps.review
+  if mapping and mapping ~= "" then
+    vim.keymap.set("n", mapping, M.review, {
+      desc = "Review buffer prose",
+      silent = true,
+    })
+  end
+
+  return current_config
+end
+
+function M.get_config()
+  return vim.deepcopy(current_config)
+end
+
+function M.review()
+  return require("foundation-review.controller").start(
+    vim.api.nvim_get_current_buf(),
+    current_config
+  )
+end
+
+function M.cancel()
+  return require("foundation-review.controller").cancel(
+    vim.api.nvim_get_current_buf()
+  )
+end
+
+function M.health()
+  return require("foundation-review.health").check(current_config)
+end
+
+return M

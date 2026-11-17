@@ -1,0 +1,16 @@
+= Punctuation Test Passage
+
+This passage contains punctuation errors for testing.
+
+The editor wants to verify that commas, apostrophes, and quotation
+marks are detected correctly.
+
+Common mistakes:
+
+1. Its a beautiful day. (should be It's)
+
+2. The cats tail was fluffy. (should be cat's)
+
+3. She said, "lets go" but we stayed. (should be Let's)
+
+4. He, she, and I went shopping. (correct usage)

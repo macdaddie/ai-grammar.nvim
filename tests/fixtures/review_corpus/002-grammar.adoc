@@ -1,0 +1,13 @@
+= Grammar Test Passage
+
+This passage tests grammatical error detection.
+
+Each of the following sentences has a grammatical mistake:
+
+1. She don't like the colour of the walls.
+
+2. Him and I went to the meeting yesterday.
+
+3. The team are working hard to meet their deadline.
+
+4. Whom did you invite to the party?

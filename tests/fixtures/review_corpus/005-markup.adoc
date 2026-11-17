@@ -1,0 +1,23 @@
+= AsciiDoc Markup Test
+
+This passage contains AsciiDoc markup that should be protected.
+
+[source,lua]
+----
+local function add(a, b)
+  return a + b
+end
+----
+
+link:https://example.com[Example Link]
+
+image::images/logo.png[Logo]
+
+[cols="1,1"]
+|===
+|Column 1|Column 2
+|Cell A|Cell B
+|===
+
+The plugin should not attempt to proofread code blocks, URLs, or
+table markup.

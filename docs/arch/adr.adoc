@@ -5,8 +5,8 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.2
-:revdate: 2026-11-16
+:revnumber: 0.5
+:revdate: 2026-11-17
 
 == Purpose
 
@@ -97,7 +97,7 @@ Superseded decisions shall not be deleted.
 
 |017
 |Restrict the plugin to four proofreading capabilities
-|Accepted
+|Superseded by ADR-026
 
 |018
 |Use Gemma 4 12B as the provisional default model
@@ -110,7 +110,195 @@ Superseded decisions shall not be deleted.
 |020
 |Distinguish corrections from sentence rewrites
 |Accepted
+
+|021
+|Fix a machine-checkable response contract
+|Accepted, revised by ADR-026
+
+|022
+|Phase 1: Core validation utilities (UTF-8 byte offsets, exact locator, chunk wrapper, finding validator)
+|Accepted
+
+|023
+|Phase 2: Document handling (chunk manager, markup protection, filetype adapters)
+|Accepted
+
+|024
+|Phase 3: Inference and presentation (Ollama adapter, review controller, quickfix presenter)
+|Superseded by ADR-027
+
+|025
+|Phase 4: Configuration, commands, health check
+|Accepted
+
+|026
+|Expand proofreading scope to seven categories
+|Accepted
+
+|027
+|Adopt the tested asynchronous plugin structure
+|Accepted
 |===
+
+=== ADR-024: Phase 3 Inference and Presentation Implementation
+
+Status:: Accepted
+Date:: 2026-11-16
+
+==== Context
+
+Phase 3 completes the plugin with inference integration and
+user-facing presentation via Neovim's quickfix list.
+
+Required components:
+
+* Ollama adapter for HTTP requests and JSON response handling
+* Review controller for orchestration
+* Quickfix presenter for result display
+
+==== Decision
+
+Implement Phase 3 modules in Lua:
+
+* `lua/foundation-review/ollama.lua` - Ollama HTTP adapter
+* `lua/foundation-review/review_controller.lua` - Chunk orchestration
+* `lua/foundation-review/quickfix.lua` - Quickfix list generation
+
+==== Rationale
+
+* `vim.system()` with `curl` avoids external Lua HTTP libraries
+* Sequential chunk processing matches context window constraints
+* Quickfix list provides native Neovim navigation and display
+* Stale result detection prevents showing outdated findings
+
+==== Implementation Details
+
+===== Ollama Adapter
+
+* `validate_endpoint(url)` - Check Ollama service availability
+* `model_available(url, model)` - Verify configured model is installed
+* `build_request(...)` - Construct API request payload
+* `send_request(url, payload, timeout_ms)` - Send inference request
+* `extract_findings(response)` - Decode JSON twice (transport → findings string → findings object)
+
+===== Review Controller
+
+* `create_request(buffer_number, filetype, config)` - Build review request
+* `review(request)` - Process all chunks sequentially
+* `build_prompt(text, config, context)` - Construct Ollama prompt
+* `buffer_changed(state)` - Detect stale results
+
+===== Quickfix Presenter
+
+* `build_entry(finding, buffer_number)` - Convert finding to quickfix entry
+* `build_quickfix_list(findings, buffer_number)` - Sort entries by location
+* `show(entries, title, auto_open)` - Populate and open quickfix list
+
+==== Consequences
+
+* Plugin supports full review workflow from buffer to results
+* Results displayed in Neovim's native quickfix window
+* Partial failures handled gracefully with incomplete status
+
+==== Next Steps
+
+Continue with Phase 4 (health checks, configuration, commands) and Phase 5 (benchmark corpus)
+
+=== ADR-025: Plugin Configuration and Commands
+
+Status:: Accepted
+Date:: 2026-11-17
+
+==== Context
+
+The plugin requires a stable public interface that works
+with standard Neovim package managers without manager-specific
+runtime code.
+
+==== Decision
+
+Expose `setup()`, `review()`, `cancel()` and `health()` from
+the root Lua module.
+
+Register `FoundationReview`, `FoundationReviewCancel` and
+`FoundationReviewHealth` from the standard `plugin/` entry
+point.
+
+Keep user configuration in Lua and provide defaults for the
+local Ollama endpoint, model, supported filetypes, chunk
+limits, quickfix behaviour and review keymap.
+
+==== Consequences
+
+The same repository layout supports `vim.pack`, lazy.nvim,
+native packages and other standard Neovim package managers.
+
+Configuration does not contact Ollama. Health checking and
+review execution remain explicit user actions.
+
+=== ADR-027: Tested Asynchronous Plugin Structure
+
+Status:: Accepted
+Date:: 2026-11-17
+Supersedes:: ADR-024
+
+==== Context
+
+ADR-024 described the first inference and presentation
+implementation. Testing exposed circular module loading,
+blocking process waits, invalid JSON error handling and
+inconsistent source-coordinate contracts.
+
+The implementation was rebuilt and verified with headless
+Neovim tests and a real Ollama review.
+
+==== Decision
+
+Use the following runtime modules:
+
+* `init.lua` for the public API and configuration state.
+* `controller.lua` for sequential review lifecycle,
+  cancellation, stale-result rejection and aggregation.
+* `ollama.lua` for asynchronous `vim.system()` transport and
+  protected JSON decoding.
+* `adapters.lua` and `markup.lua` for source-preserving
+  chunking and length-preserving masking.
+* `locator.lua` and `validate.lua` for deterministic finding
+  validation and source coordinates.
+* `prompt.lua`, `schema.lua` and `quickfix.lua` for their
+  corresponding bounded responsibilities.
+
+The controller shall process one chunk at a time and retain
+the active process handle for cancellation.
+
+Every chunk shall map each review-text byte to an absolute
+captured-buffer byte. Quickfix positions shall be derived as
+line-local byte columns with verified end positions.
+
+Ollama requests shall remain asynchronous and shall include
+`stream: false`, `think: false`, temperature zero and the
+packaged JSON Schema.
+
+==== Rationale
+
+* Prevents inference from blocking Neovim.
+* Removes circular module dependencies.
+* Keeps probabilistic output behind deterministic validation.
+* Makes cancellation and stale-result handling testable.
+* Preserves source coordinates through markup masking.
+* Supports clean installation through standard package managers.
+
+==== Consequences
+
+The modules named in ADR-024 are historical and no longer
+describe the runnable implementation.
+
+The headless suite is the executable specification for the
+critical review workflow. Real Ollama integration verifies
+that precise model quotations reach quickfix correctly.
+
+Typst and RTF remain deferred until dedicated parsers provide
+the same reversible mapping guarantees.
 
 == Historical Decisions
 
@@ -969,6 +1157,325 @@ technical terminology and authorial voice.
 No suggested correction or rewrite shall be
 applied automatically.
 
+=== ADR-021: Machine-Checkable Response Contract
+
+Status:: Accepted
+Date:: 2026-11-16
+Refines:: ADR-016, ADR-020
+
+==== Context
+
+ADR-016 introduced a versioned findings schema and
+deterministic source validation.
+
+ADR-020 introduced two finding types.
+
+Both are described in the design guide as prose.
+
+Neither has been fixed in a form that can be
+implemented or tested without interpretation.
+
+Four ambiguities remain:
+
+* No response field distinguishes a correction from a
+  sentence rewrite.
+* `severity` appears in the internal representation but
+  is never supplied by the model.
+* Repeated quotations are handled by an optional
+  mechanism rather than a fixed rule.
+* Hard-wrapped source lines make exact quotation
+  unreliable across a line break.
+
+Without a resolution, the validator has no defined
+behaviour for the common failure cases, and model
+evaluation has no stable target.
+
+==== Decision
+
+The following contract is normative.
+
+===== Request Conditions
+
+A review request shall:
+
+. Use the configured loopback Ollama endpoint.
+. Post to `/api/generate`.
+. Set `stream` to `false`.
+. Set `options.temperature` to `0`.
+. Set `format` to the packaged JSON Schema.
+. Set `think` to `false` where the model supports it.
+
+The `response` field of a successful reply contains a
+JSON string, which shall be decoded.
+
+If decoding yields a further string, it shall be
+decoded once more.
+
+Further nesting, a missing field, an empty field or a
+decode failure shall fail the chunk.
+
+An empty response shall never be read as an absence
+of findings.
+
+===== Response Envelope
+
+The decoded object contains one required key,
+`findings`, which may be an empty array.
+
+[source,json]
+----
+{
+  "findings": [
+    {
+      "type": "correction",
+      "category": "spelling",
+      "original": "recieved",
+      "suggestion": "received",
+      "message": "Incorrect spelling."
+    }
+  ]
+}
+----
+
+No other top-level key is permitted.
+
+The schema version is a plugin concern and shall not
+be supplied by the model.
+
+===== Finding Fields
+
+[cols="1,1,3",options="header"]
+|===
+|Field |Required |Constraint
+
+|`type`
+|Yes
+|`correction` or `rewrite`.
+
+|`category`
+|Yes
+|`spelling`, `grammar`, `punctuation` or
+`sentence_readability`.
+
+|`original`
+|Yes
+|Non-empty exact quotation from the reviewed text.
+
+|`suggestion`
+|Yes
+|Non-empty replacement text.
+
+|`message`
+|Yes
+|Non-empty single-sentence explanation.
+|===
+
+===== Type and Category Coupling
+
+`rewrite` shall be used only with
+`sentence_readability`.
+
+`correction` shall be used only with `spelling`,
+`grammar` or `punctuation`.
+
+A finding that breaks this coupling is rejected.
+
+===== Severity Derivation
+
+Severity is derived by the plugin and is never read
+from the model response.
+
+`correction` findings use quickfix severity `warning`.
+
+`rewrite` findings use quickfix severity `info`.
+
+===== Locating Rules
+
+A finding is located within the reviewable text of the
+chunk that produced it.
+
+The quotation shall match exactly, including case,
+punctuation and internal spacing.
+
+A finding is accepted only when the quotation occurs
+exactly once in that reviewable text.
+
+A quotation that occurs more than once is rejected as
+ambiguous.
+
+The validator shall neither choose an occurrence nor
+widen the search to the whole buffer.
+
+===== Whitespace Fallback
+
+Prose is hard-wrapped, so a sentence spanning two
+source lines contains a newline in the reviewable
+text.
+
+If the exact match fails, one further pass is
+permitted.
+
+In that pass, runs of whitespace in both the quotation
+and the reviewable text collapse to a single space
+before comparison.
+
+The pass succeeds only when it produces exactly one
+match.
+
+Every collated character shall retain a mapping to its
+original byte offset, so that the resulting quickfix
+position is derived from the original buffer.
+
+No other normalisation is permitted.
+
+Case folding, Unicode normalisation, smart-quote
+substitution and typographic equivalence shall not be
+applied.
+
+===== Rejection Reporting
+
+Every rejected finding shall be counted against
+exactly one reason.
+
+[cols="1,3",options="header"]
+|===
+|Reason |Condition
+
+|`schema_invalid`
+|The envelope or an object fails the schema.
+
+|`not_exact`
+|The quotation does not match the reviewable text.
+
+|`not_unique`
+|The quotation matches more than once.
+
+|`protected`
+|The quotation overlaps protected content.
+
+|`unsupported_category`
+|The category is outside the four agreed categories.
+
+|`type_mismatch`
+|`type` and `category` are inconsistently paired.
+
+|`stale`
+|The finding belongs to a superseded review.
+|===
+
+==== Rationale
+
+* Removes the remaining interpretative gaps.
+* Makes every rejection reason testable.
+* Keeps severity and coordinates under plugin control.
+* Refuses to guess when a quotation is ambiguous.
+* Limits whitespace tolerance to the single case the
+  source format forces.
+* Gives the benchmark a stable contract to measure.
+
+==== Consequences
+
+Short quotations without surrounding context are more
+likely to be rejected as ambiguous.
+
+Model evaluation shall report exact-quote accuracy
+against this contract rather than against a looser
+reading of the design guide.
+
+The optional repeated-quotation wording in the design
+guide is superseded.
+
+The schema shall be shipped as one versioned artefact
+and tested against the examples in this record.
+
+The whitespace fallback shall be bounded to one extra
+scan per chunk.
+
+=== ADR-026: Expanded Proofreading Scope
+
+Status:: Accepted
+Date:: 2026-11-17
+Supersedes:: ADR-017
+Revises:: ADR-021
+
+==== Context
+
+ADR-017 limited the initial release to spelling,
+grammar, punctuation and sentence readability.
+
+The intended proofreading workflow also needs to find
+common problems with sentence structure, inappropriate
+word choice and inconsistent usage within a document.
+
+These checks remain narrower than general stylistic
+editing, ambiguity analysis, logical review or
+fact-checking.
+
+ADR-021 fixed a response schema whose category enum and
+type coupling reflected the four-category scope.
+
+==== Decision
+
+The plugin shall support seven proofreading categories:
+
+. `spelling`.
+. `grammar`.
+. `punctuation`.
+. `sentence_readability`.
+. `structure`.
+. `word_choice`.
+. `consistency`.
+
+`structure` covers a sentence whose arrangement of
+clauses or phrases impairs comprehension even when its
+individual words and grammar are valid.
+
+`word_choice` covers a locally inappropriate, commonly
+confused or contextually incorrect word where a specific
+replacement preserves the author's intended meaning.
+
+`consistency` covers inconsistent spelling, capitalisation,
+hyphenation or terminology within the reviewed document.
+It does not establish a project terminology policy or
+perform logical consistency analysis.
+
+`sentence_readability` and `structure` use finding type
+`rewrite` and shall quote a complete source sentence.
+
+`spelling`, `grammar`, `punctuation`, `word_choice` and
+`consistency` use finding type `correction`.
+
+The packaged JSON Schema and deterministic validator
+shall enforce these seven categories and their type
+coupling.
+
+==== Rationale
+
+* Captures common proofreading problems that are not
+  represented by the original four categories.
+* Keeps each finding tied to an exact source quotation
+  and a concrete suggested replacement.
+* Separates sentence construction from general
+  readability while retaining advisory severity.
+* Limits consistency checking to observable document
+  usage rather than broader editorial policy.
+* Preserves the exclusion of unrestricted style review.
+
+==== Consequences
+
+The prompt, schema, validator, quickfix presentation and
+benchmark corpus shall use the seven-category enum.
+
+Consistency findings may require surrounding or
+document-level context to establish the preferred form.
+The implementation shall still locate and report one
+exact source occurrence per finding.
+
+General stylistic rewriting, ambiguity analysis,
+redundancy analysis, logical consistency checking,
+terminology-policy enforcement and fact-checking remain
+outside scope.
+
 == Decision Governance
 
 === Decision Lifecycle
@@ -1004,7 +1511,6 @@ The following matters remain subject to testing:
 
 * Final proofreading model selection.
 * Practical context and chunk size.
-* Handling repeated identical source quotations.
 * Sentence-boundary detection across AsciiDoc markup.
 * Quality thresholds for sentence rewrites.
 * Acceptable false-positive rates.
