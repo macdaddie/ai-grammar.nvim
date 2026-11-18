@@ -1,7 +1,7 @@
 
-= Foundation Review for Neovim
+= AI Proofread for Neovim
 
-Foundation Review is a Neovim plugin for on-demand British
+AI Proofread is a Neovim plugin for on-demand British
 English proofreading with a local Ollama model.
 
 It reviews prose without sending document contents to a cloud
@@ -35,9 +35,9 @@ deliberately outside scope.
 == Requirements
 
 * Neovim 0.12 or later.
-* A local Ollama service.
-* An installed model that supports structured output.
-* `curl` available in `PATH`.
+* macOS with the native `fm` command, or a local Ollama
+  service with an installed structured-output model.
+* `curl` in `PATH` when using Ollama.
 
 The provisional default model is `gemma4:12b-it-qat`.
 The plugin never downloads models.
@@ -49,10 +49,10 @@ The plugin never downloads models.
 [source,lua]
 ----
 vim.pack.add({
-  "https://github.com/macdaddie/foundation-review.nvim",
+  "https://github.com/macdaddie/ai-proofread.nvim",
 })
 
-require("foundation-review").setup()
+require("ai-proofread").setup()
 ----
 
 === lazy.nvim and LazyVim
@@ -60,7 +60,7 @@ require("foundation-review").setup()
 [source,lua]
 ----
 {
-  "macdaddie/foundation-review.nvim",
+  "macdaddie/ai-proofread.nvim",
   opts = {},
 }
 ----
@@ -69,27 +69,35 @@ require("foundation-review").setup()
 
 [source,bash]
 ----
-git clone https://github.com/macdaddie/foundation-review.nvim \
-  ~/.local/share/nvim/site/pack/vendor/start/foundation-review.nvim
+git clone https://github.com/macdaddie/ai-proofread.nvim \
+  ~/.local/share/nvim/site/pack/vendor/start/ai-proofread.nvim
 ----
 
 Then configure the plugin in `init.lua`:
 
 [source,lua]
 ----
-require("foundation-review").setup()
+require("ai-proofread").setup()
 ----
 
 == Configuration
 
 [source,lua]
 ----
-require("foundation-review").setup({
+require("ai-proofread").setup({
   language = "en-GB",
+  backend = "ollama",
   ollama = {
     url = "http://127.0.0.1:11434",
     model = "gemma4:12b-it-qat",
     timeout_ms = 120000,
+    preload = true,
+    -- keep_alive = "1h",
+  },
+  fm = {
+    command = "fm",
+    model = "system",
+    timeout_ms = 30000,
   },
   filetypes = {
     asciidoc = true,
@@ -105,47 +113,93 @@ require("foundation-review").setup({
   },
   keymaps = {
     review = "<leader>ar",
+    review_selection = "<leader>ar",
     apply = "<leader>aa",
     apply_all = "<leader>aA",
+    ignore = "<leader>ai",
   },
 })
 ----
 
+== Inference Backends
+
+`backend = "ollama"` uses the configured local Ollama model
+and remains the default because it provides better
+proofreading quality.
+
+`backend = "fm"` uses Apple's native on-device Foundation
+Model:
+
+[source,lua]
+----
+require("ai-proofread").setup({
+  backend = "fm",
+})
+----
+
+The `fm` backend needs no Ollama installation or model
+download on a supported, up-to-date Mac.
+It is faster to start but substantially less capable, so
+expect lower recall and more rejected findings.
+Both backends use the same deterministic schema and source
+validation before findings reach quickfix.
+
+The first use of `fm` may require accepting Apple's terms
+through the `fm` command.
+
 == Commands
 
-`FoundationReview`::
+`AIProofread`::
 Review the current buffer.
 
-`FoundationReviewCancel`::
+`AIProofreadSelection`::
+Review the most recent characterwise or linewise visual
+selection.
+
+`AIProofreadCancel`::
 Cancel the active review for the current buffer.
 
-`FoundationReviewHealth`::
+`AIProofreadHealth`::
 Check whether the configured Ollama model is available.
 
-`FoundationReviewApply`::
+`AIProofreadApply`::
 Apply the correction at the current quickfix entry.
 
-`FoundationReviewApplyAll`::
+`AIProofreadApplyAll`::
 Apply all remaining corrections from the latest review.
+
+`AIProofreadIgnore`::
+Ignore the current quickfix recommendation.
+
+The former `foundation-review` Lua module and
+`FoundationReview*` commands remain as deprecated
+compatibility aliases.
 
 == Review and Apply Corrections
 
 . Open a supported `text`, `markdown` or `asciidoc` buffer.
-. Run `:FoundationReview` or press `<leader>ar`.
+. Run `:AIProofread` or press `<leader>ar` in normal
+  mode to review the complete buffer.
+. To review only part of a buffer, select it characterwise
+  or linewise and press `<leader>ar`.
+  `:AIProofreadSelection` reviews the most recent visual
+  selection.
 . Wait for the review to populate the quickfix list.
 . Navigate findings with `:cnext`, `:cprevious` or the
   quickfix window.
 . Apply the current quickfix correction with
-  `:FoundationReviewApply` or `<leader>aa`.
+  `:AIProofreadApply` or `<leader>aa`.
+. Ignore the current recommendation with
+  `:AIProofreadIgnore` or `<leader>ai`.
 . Alternatively, apply every remaining correction from that
-  review with `:FoundationReviewApplyAll` or `<leader>aA`.
+  review with `:AIProofreadApplyAll` or `<leader>aA`.
 
 The current correction is the entry selected in the
-Foundation Review quickfix list.
+AI Proofread quickfix list.
 The apply command can be invoked from either the quickfix
 window or the reviewed buffer.
 
-The latest review replaces the previous Foundation Review
+The latest review replaces the previous AI Proofread
 results for that buffer.
 Starting another review therefore replaces the corrections
 available for application.
@@ -163,6 +217,9 @@ undoable change.
 After an individual correction succeeds, its quickfix entry
 is removed and the next outstanding recommendation becomes
 current.
+Ignoring a correction also removes its entry, advances to
+the next recommendation and excludes it from subsequent
+bulk application.
 After bulk application succeeds, all applied entries are
 removed and the quickfix list is empty.
 Failed or stale corrections remain in the list.
@@ -178,7 +235,7 @@ state before the fixes were applied.
 Individually applied corrections use Neovim's normal undo
 history.
 Undo does not restore removed quickfix entries; run
-`:FoundationReview` again to produce a new review.
+`:AIProofread` again to produce a new review.
 
 Quickfix entries contain source-verified start and end byte
 positions. All corrections use warning severity.
@@ -190,11 +247,29 @@ For command-oriented help inside Neovim, run:
 
 [source,vim]
 ----
-:help foundation-review
+:help ai-proofread
 ----
 
 The help source is also available at
-link:doc/foundation-review.txt[`doc/foundation-review.txt`].
+link:doc/ai-proofread.txt[`doc/ai-proofread.txt`].
+
+== Model Preloading
+
+Set `ollama.preload = true` to begin loading the configured
+model asynchronously when `setup()` runs during Neovim
+startup.
+Startup is not blocked while Ollama loads the model.
+
+By default, preload and review requests omit `keep_alive`,
+so Ollama uses its configured `OLLAMA_KEEP_ALIVE` value.
+Set `ollama.keep_alive`, for example to `"1h"`, to override
+that value for AI Proofread preload and review requests.
+
+Preloading reduces the delay before the first review but
+keeps the model resident according to the effective
+keep-alive duration and therefore continues to use memory.
+These settings apply only to the Ollama backend; the native
+`fm` model is managed by macOS.
 
 == Development
 
@@ -225,5 +300,5 @@ fallback is implemented.
 
 == Licence
 
-Foundation Review is released under the MIT Licence. See
+AI Proofread is released under the MIT Licence. See
 link:LICENSE[LICENSE].

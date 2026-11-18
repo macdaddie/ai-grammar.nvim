@@ -1,0 +1,93 @@
+*ai-proofread.txt*  Local AI proofreading for Neovim
+
+=============================================================================
+CONTENTS                                              *ai-proofread*
+
+1. Introduction                         |ai-proofread-introduction|
+2. Setup                                |ai-proofread-setup|
+3. Commands                          |ai-proofread-commands|
+
+=============================================================================
+1. INTRODUCTION                          *ai-proofread-introduction*
+
+AI Proofread checks prose with native Apple fm or a local Ollama model and
+places source-verified findings in the quickfix list.
+
+Supported filetypes are `text`, `markdown` and `asciidoc`.
+
+=============================================================================
+2. SETUP                                        *ai-proofread-setup*
+
+>lua
+  require("ai-proofread").setup({
+    backend = "ollama",
+    ollama = {
+      url = "http://127.0.0.1:11434",
+      model = "gemma4:12b-it-qat",
+      preload = true,
+      -- keep_alive = "1h",
+    },
+  })
+<
+
+Set backend = "fm" to use Apple's native on-device Foundation Model instead
+of Ollama. This requires no downloaded Ollama model but provides lower
+proofreading quality. Both backends use the same source validation.
+
+=============================================================================
+3. COMMANDS                                  *ai-proofread-commands*
+
+                                                *:AIProofread*
+:AIProofread
+        Review the current buffer and replace the AI Proofread quickfix
+        list when the review completes.
+
+                                      *:AIProofreadSelection*
+:AIProofreadSelection
+        Review the most recent characterwise or linewise visual selection.
+        In visual mode, the default <leader>ar mapping invokes this command.
+        Blockwise selections are not supported.
+
+                                          *:AIProofreadCancel*
+:AIProofreadCancel
+        Cancel the active review for the current buffer.
+
+                                           *:AIProofreadHealth*
+:AIProofreadHealth
+        Check whether the selected backend and model are available.
+
+                                            *:AIProofreadApply*
+:AIProofreadApply
+        Apply the correction at the current quickfix entry after verifying
+        that its source text has not changed. A successful correction is
+        removed from quickfix and the next outstanding entry is selected.
+
+                                         *:AIProofreadApplyAll*
+:AIProofreadApplyAll
+        Apply all remaining corrections from the latest review. The command
+        aborts before editing if any range is stale or overlaps another
+        correction. A successful bulk application is one undo step and
+        clears the applied entries from quickfix. Failed corrections remain.
+
+                                           *:AIProofreadIgnore*
+:AIProofreadIgnore
+        Ignore the current quickfix recommendation without changing the
+        buffer. The entry is removed, the next recommendation is selected,
+        and the ignored correction is excluded from bulk application.
+
+        The former foundation-review Lua module and FoundationReview commands
+        remain available as deprecated compatibility aliases.
+
+        Undo does not restore removed quickfix entries. Run
+        :AIProofread again to create a new review.
+
+Model preloading~
+
+Set `ollama.preload = true` to load the configured model asynchronously when
+setup() runs. Neovim startup is not blocked.
+
+If `ollama.keep_alive` is omitted, Ollama uses OLLAMA_KEEP_ALIVE. Set it to a
+duration such as "1h" to override that value for AI Proofread preload and
+review requests.
+
+vim:tw=78:ts=8:noet:ft=help:norl:

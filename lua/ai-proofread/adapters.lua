@@ -1,4 +1,4 @@
-local markup = require("foundation-review.markup")
+local markup = require("ai-proofread.markup")
 
 local M = {}
 
@@ -158,7 +158,7 @@ function M.supports(filetype)
   return scanners[filetype] ~= nil
 end
 
-function M.prepare(filetype, text, budget, hard_limit)
+function M.prepare(filetype, text, budget, hard_limit, selection)
   local scanner = scanners[filetype]
   if not scanner then
     return nil, "unsupported_filetype"
@@ -167,7 +167,16 @@ function M.prepare(filetype, text, budget, hard_limit)
   local protected_spans = scanner(text)
   local chunks = {}
   hard_limit = hard_limit or math.max(budget, 12000)
-  for _, span in ipairs(chunk_spans(text, budget, hard_limit)) do
+  local selected_text = text
+  local base_byte = 0
+  if selection then
+    selected_text = text:sub(selection.start_byte, selection.end_byte)
+    base_byte = selection.start_byte - 1
+  end
+
+  for _, span in ipairs(chunk_spans(selected_text, budget, hard_limit)) do
+    span.start_byte = span.start_byte + base_byte
+    span.end_byte = span.end_byte + base_byte
     chunks[#chunks + 1] = build_chunk(text, span, protected_spans)
   end
   return chunks

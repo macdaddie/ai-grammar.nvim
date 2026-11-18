@@ -1,4 +1,4 @@
-local locator = require("foundation-review.locator")
+local locator = require("ai-proofread.locator")
 
 local M = {}
 
@@ -9,6 +9,7 @@ M.RejectionReason = {
   PROTECTED = "protected",
   UNSUPPORTED_CATEGORY = "unsupported_category",
   TYPE_MISMATCH = "type_mismatch",
+  NO_CHANGE = "no_change",
   STALE = "stale",
 }
 
@@ -114,6 +115,12 @@ function M.validate_finding(finding, chunk)
     chunk.document_text,
     source_end
   )
+  local source_text = chunk.document_text:sub(source_start, source_end)
+  if finding.suggestion == finding.original
+    or finding.suggestion == source_text
+  then
+    return nil, M.RejectionReason.NO_CHANGE
+  end
 
   return {
     line = line,
@@ -122,7 +129,7 @@ function M.validate_finding(finding, chunk)
     end_column = end_column,
     source_start_byte = source_start,
     source_end_byte = source_end,
-    source_text = chunk.document_text:sub(source_start, source_end),
+    source_text = source_text,
     severity = "warning",
     type = finding.type,
     category = finding.category,

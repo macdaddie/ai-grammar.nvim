@@ -1,10 +1,10 @@
 local M = {}
 
-local namespace = vim.api.nvim_create_namespace("foundation-review-apply")
+local namespace = vim.api.nvim_create_namespace("ai-proofread-apply")
 local states = {}
 
 local function notify(message, level)
-  vim.notify("Foundation Review: " .. message, level or vim.log.levels.INFO)
+  vim.notify("AI Proofread: " .. message, level or vim.log.levels.INFO)
 end
 
 local function position_less(left_row, left_col, right_row, right_col)
@@ -24,7 +24,7 @@ local function remove_quickfix_entries(ids)
     title = 1,
     context = 1,
   })
-  if quickfix.title ~= "Foundation Review" then
+  if quickfix.title ~= "AI Proofread" then
     return
   end
 
@@ -32,7 +32,7 @@ local function remove_quickfix_entries(ids)
   for _, item in ipairs(quickfix.items) do
     local user_data = item.user_data
     local id = type(user_data) == "table"
-        and user_data.foundation_review_id
+        and user_data.ai_proofread_id
       or nil
     if not ids[id] then
       items[#items + 1] = item
@@ -106,12 +106,12 @@ local function state_for_quickfix()
   local quickfix = vim.fn.getqflist({ idx = 0, items = 1 })
   local item = quickfix.items[quickfix.idx]
   if not item then
-    return nil, nil, "no current Foundation Review finding"
+    return nil, nil, "no current AI Proofread finding"
   end
 
   local user_data = item.user_data
   local id = type(user_data) == "table"
-      and user_data.foundation_review_id
+      and user_data.ai_proofread_id
     or nil
   local state = states[item.bufnr]
   local finding = state and state.by_id[id] or nil
@@ -149,6 +149,7 @@ function M.register(buffer, review_id, findings)
     tracked.application_id = id
     tracked.buffer = buffer
     tracked.applied = false
+    tracked.ignored = false
     tracked.extmark = vim.api.nvim_buf_set_extmark(
       buffer,
       namespace,
@@ -198,6 +199,25 @@ function M.current()
   return true
 end
 
+function M.ignore()
+  local _, finding, err = state_for_quickfix()
+  if not finding then
+    notify(err, vim.log.levels.ERROR)
+    return nil, err
+  end
+
+  finding.ignored = true
+  pcall(
+    vim.api.nvim_buf_del_extmark,
+    finding.buffer,
+    namespace,
+    finding.extmark
+  )
+  remove_quickfix_entries({ [finding.application_id] = true })
+  notify("ignored correction")
+  return true
+end
+
 function M.all()
   local state = state_for_all()
   if not state then
@@ -208,7 +228,7 @@ function M.all()
 
   local pending = {}
   for _, finding in ipairs(state.findings) do
-    if not finding.applied then
+    if not finding.applied and not finding.ignored then
       local range, err = resolve(finding)
       if not range then
         notify(err, vim.log.levels.WARN)

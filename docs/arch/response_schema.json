@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
-  "$id": "https://foundation-review.nvim/response/v3",
-  "title": "Foundation Review Response Schema",
-  "description": "Response contract for foundation-review.nvim findings",
+  "$id": "https://ai-proofread.nvim/response/v3",
+  "title": "AI Proofread Response Schema",
+  "description": "Response contract for ai-proofread.nvim findings",
   "type": "object",
   "properties": {
     "findings": {

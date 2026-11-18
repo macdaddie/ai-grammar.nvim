@@ -1,16 +1,16 @@
 
-= Foundation Review: Concept Guide
+= AI Proofread: Concept Guide
 :toc:
 :toclevels: 3
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.7
-:revdate: 2026-11-17
+:revnumber: 0.8
+:revdate: 2026-11-18
 
 == Executive Summary
 
-*Foundation Review* (`foundation-review.nvim`) is a
+*AI Proofread* (`ai-proofread.nvim`) is a
 lightweight Neovim plugin providing AI-assisted proofreading
 of prose and markup documents.
 
@@ -20,9 +20,10 @@ Its primary responsibilities are:
 * Grammar.
 * Punctuation.
 * User-triggered application of validated corrections.
+* User-triggered dismissal of unwanted recommendations.
 
-The plugin uses a locally hosted language model through
-Ollama and presents findings through Neovim's native
+The plugin uses a selected local model through native Apple
+`fm` or Ollama and presents findings through Neovim's native
 quickfix list.
 
 The initial model is `gemma4:12b-it-qat`, subject to
@@ -46,7 +47,7 @@ General-purpose AI assistants can help, but introduce
 unnecessary interaction and may suggest changes outside
 the author's intended scope.
 
-Foundation Review addresses this problem through a
+AI Proofread addresses this problem through a
 focused, on-demand proofreading workflow integrated
 with Neovim.
 
@@ -70,7 +71,8 @@ The project shall:
 |===
 a|
 . Integrate natively with Neovim using Lua.
-. Use local inference through Ollama.
+. Use selectable local inference through Apple `fm` or
+  Ollama.
 . Operate without external network connectivity.
 . Support text and markup document formats.
 . Restrict operation to configured filetypes.
@@ -84,6 +86,7 @@ a|[start=9]
 . Preserve accurate source locations.
 . Apply a selected validated correction on request.
 . Apply all validated corrections on request.
+. Ignore a selected recommendation on request.
 . Execute asynchronously.
 . Never modify document contents without an explicit
   application command.
@@ -120,6 +123,8 @@ Correction application is always initiated by the author.
 The current quickfix finding may be applied individually,
 or all remaining validated findings from the latest review
 may be applied in one operation.
+The current finding may instead be ignored without changing
+the buffer.
 
 Before changing the buffer, the plugin shall verify that
 each target range still contains the exact source slice
@@ -137,6 +142,8 @@ quickfix list.
 Individual application shall select the next outstanding
 finding, and successful bulk application shall leave the
 list empty.
+Ignoring shall remove the current finding, select the next
+one and exclude the ignored finding from bulk application.
 Failed corrections shall remain visible.
 
 === Out of Scope
@@ -189,7 +196,7 @@ scope decision and are not implied by the use of an LLM.
 |Lua
 
 |Inference interface
-|Ollama local HTTP API
+|Apple `fm` CLI or Ollama local HTTP API
 
 |Initial model
 |`gemma4:12b-it-qat`
@@ -210,7 +217,8 @@ scope decision and are not implied by the use of an LLM.
 Model names are configuration values rather than
 hard-coded application dependencies.
 
-The implementation shall use Ollama exclusively.
+The implementation supports native Apple `fm` and local
+Ollama as explicitly selected backends.
 
 Apple Foundation Models is not an initial backend,
 following comparative feasibility testing.
@@ -228,10 +236,10 @@ partial failure and hard limits.
 === Normal Workflow
 
 . Open a supported document in Neovim.
-. Execute `:FoundationReview`.
+. Execute `:AIProofread`.
 . The plugin captures the current buffer contents.
 . The document is divided into reviewable sections.
-. Each section is submitted to the local Ollama model.
+. Each section is submitted to the selected local model.
 . Structured findings are validated and consolidated.
 . The quickfix list is populated and opened.
 . The author navigates through the findings.
@@ -244,20 +252,26 @@ partial failure and hard limits.
 |===
 |Command |Purpose
 
-|`:FoundationReview`
+|`:AIProofread`
 |Review the current buffer.
 
-|`:FoundationReviewCancel`
+|`:AIProofreadSelection`
+|Review the most recent characterwise or linewise selection.
+
+|`:AIProofreadCancel`
 |Cancel the active review.
 
-|`:FoundationReviewHealth`
+|`:AIProofreadHealth`
 |Check Ollama availability, configuration and model status.
 
-|`:FoundationReviewApply`
+|`:AIProofreadApply`
 |Apply the correction at the current quickfix entry.
 
-|`:FoundationReviewApplyAll`
+|`:AIProofreadApplyAll`
 |Apply all remaining corrections from the latest review.
+
+|`:AIProofreadIgnore`
+|Ignore the current recommendation and select the next one.
 |===
 
 These commands constitute the implemented command API.
@@ -297,14 +311,23 @@ Example:
 
 [source,lua]
 ----
-require("foundation-review").setup({
+require("ai-proofread").setup({
   language = "en-GB",
+  backend = "ollama",
 
   ollama = {
     url = "http://127.0.0.1:11434",
     model = "gemma4:12b-it-qat",
     timeout_ms = 120000,
     temperature = 0,
+    preload = false,
+    -- keep_alive = "1h",
+  },
+
+  fm = {
+    command = "fm",
+    model = "system",
+    timeout_ms = 30000,
   },
 
   filetypes = {
@@ -330,8 +353,10 @@ require("foundation-review").setup({
 
   keymaps = {
     review = "<leader>ar",
+    review_selection = "<leader>ar",
     apply = "<leader>aa",
     apply_all = "<leader>aA",
+    ignore = "<leader>ai",
   },
 })
 ----
@@ -387,8 +412,8 @@ terminology and intended style.
 
 === Local Privacy
 
-Document content shall be sent only to the configured
-local Ollama endpoint during initial operation.
+Document content shall be sent only to the native `fm`
+process or configured local Ollama endpoint.
 
 No automatic cloud fallback shall be permitted.
 
@@ -397,12 +422,12 @@ logs by default.
 
 === Complementary Language Tools
 
-Foundation Review complements Harper LSP and similar
+AI Proofread complements Harper LSP and similar
 language tools.
 
 Harper provides continuous language diagnostics.
 
-Foundation Review provides deliberate, context-sensitive
+AI Proofread provides deliberate, context-sensitive
 proofreading and sentence restructuring.
 
 The plugin shall not require Harper to be installed.
@@ -416,7 +441,7 @@ by ordinary editing, buffer changes or saves.
 
 == Conceptual Workflow
 
-[plantuml,foundation-review-concept,svg]
+[plantuml,ai-proofread-concept,svg]
 ----
 @startuml
 skinparam monochrome true
@@ -429,7 +454,7 @@ if (Configured filetype?) then (Yes)
   :Invoke review;
   :Capture buffer snapshot;
   :Protect markup and segment prose;
-  :Invoke local Ollama model;
+  :Invoke selected local model;
   :Validate structured findings;
   :Populate quickfix list;
   :Navigate findings;
@@ -473,8 +498,9 @@ stop
 
 === Security
 
-* The plugin shall connect only to a configured
-  loopback Ollama endpoint in the initial release.
+* Ollama mode shall connect only to a configured loopback
+  endpoint.
+* Native mode shall invoke only the local `fm` command.
 * Document text shall be treated as untrusted input.
 * Model output shall never be executed as code.
 * No automatic cloud fallback shall be permitted.
@@ -497,7 +523,7 @@ The implemented proof of concept demonstrates:
 [cols="1,1",frame=none, grid=none]
 |===
 a|
-. Ollama and the configured model can be verified.
+. The selected backend and model can be verified.
 . A short document produces valid structured findings.
 . British English spelling is handled correctly.
 . Representative grammar errors are identified.

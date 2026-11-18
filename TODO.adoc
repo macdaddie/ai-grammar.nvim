@@ -1,15 +1,20 @@
 
-= Foundation Review: Implementation TODO
+= AI Proofread: Implementation TODO
 
 == Current State
 
-* Project name: `foundation-review.nvim`.
-* Public GitHub repository: `macdaddie/foundation-review.nvim`.
+* Project name: `ai-proofread.nvim`.
+* Public GitHub repository: `macdaddie/ai-proofread.nvim`.
 * Public API and commands load in a clean Neovim session.
 * Plain text, Markdown and AsciiDoc adapters are implemented.
 * Reviews use asynchronous local Ollama requests.
+* Complete buffers and visual selections can be reviewed.
+* The configured model can be preloaded asynchronously at
+  Neovim startup.
+* Inference can use either native Apple `fm` or local Ollama.
 * Validated findings are published to quickfix.
 * Corrections can be applied individually or all at once.
+* Recommendations can be ignored without changing the buffer.
 * Headless integration tests cover the critical workflow.
 * A real Ollama review produces source-precise quickfix entries.
 
@@ -29,6 +34,12 @@
   for bulk correction application.
 * Successful fixes leave only outstanding recommendations in
   quickfix; failed fixes remain visible.
+* Ignored recommendations are removed from quickfix and
+  excluded from bulk application.
+* Characterwise and linewise selection review retains
+  original-buffer coordinates.
+* Optional model preload respects `OLLAMA_KEEP_ALIVE` unless
+  a per-request `keep_alive` value is configured.
 * `vim.pack`, lazy.nvim and native-package documentation.
 * Headless Neovim test workflow.
 * MIT Licence and renamed public GitHub repository.

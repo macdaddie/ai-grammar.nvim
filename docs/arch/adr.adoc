@@ -1,17 +1,17 @@
 
-= Foundation Review: Architecture Decision Records
+= AI Proofread: Architecture Decision Records
 :toc:
 :toclevels: 3
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.6
-:revdate: 2026-11-17
+:revnumber: 0.7
+:revdate: 2026-11-18
 
 == Purpose
 
 This document records significant architectural decisions
-for `foundation-review.nvim`.
+for `ai-proofread.nvim`.
 
 Each Architecture Decision Record (ADR) describes:
 
@@ -85,7 +85,7 @@ Superseded decisions shall not be deleted.
 
 |014
 |Use local Ollama inference instead of Apple `fm`
-|Accepted
+|Superseded by ADR-034
 
 |015
 |Use asynchronous Ollama HTTP requests
@@ -146,6 +146,26 @@ Superseded decisions shall not be deleted.
 |029
 |Apply validated corrections on explicit request
 |Accepted
+
+|030
+|Dismiss individual recommendations
+|Accepted
+
+|031
+|Review exact visual selections
+|Accepted
+
+|032
+|Optionally preload the Ollama model during startup
+|Accepted
+
+|033
+|Rename the plugin to `ai-proofread.nvim`
+|Accepted
+
+|034
+|Support native `fm` and local Ollama backends
+|Accepted
 |===
 
 === ADR-024: Phase 3 Inference and Presentation Implementation
@@ -168,9 +188,9 @@ Required components:
 
 Implement Phase 3 modules in Lua:
 
-* `lua/foundation-review/ollama.lua` - Ollama HTTP adapter
-* `lua/foundation-review/review_controller.lua` - Chunk orchestration
-* `lua/foundation-review/quickfix.lua` - Quickfix list generation
+* `lua/ai-proofread/ollama.lua` - Ollama HTTP adapter
+* `lua/ai-proofread/review_controller.lua` - Chunk orchestration
+* `lua/ai-proofread/quickfix.lua` - Quickfix list generation
 
 ==== Rationale
 
@@ -229,8 +249,8 @@ runtime code.
 Expose `setup()`, `review()`, `cancel()` and `health()` from
 the root Lua module.
 
-Register `FoundationReview`, `FoundationReviewCancel` and
-`FoundationReviewHealth` from the standard `plugin/` entry
+Register `AIProofread`, `AIProofreadCancel` and
+`AIProofreadHealth` from the standard `plugin/` entry
 point.
 
 Keep user configuration in Lua and provide defaults for the
@@ -700,9 +720,10 @@ initial release.
 
 === ADR-014: Local Ollama Inference
 
-Status:: Accepted
+Status:: Superseded
 Date:: 2026-11-16
 Supersedes:: ADR-001, ADR-009
+Superseded by:: ADR-034
 
 ==== Context
 
@@ -1371,6 +1392,9 @@ exactly one reason.
 |`type_mismatch`
 |`type` and `category` are inconsistently paired.
 
+|`no_change`
+|The suggestion is identical to the quoted or source text.
+
 |`stale`
 |The finding belongs to a superseded review.
 |===
@@ -1605,8 +1629,8 @@ published review.
 
 Expose these operations through `apply()` and `apply_all()`
 in the public Lua API and through
-`:FoundationReviewApply` and
-`:FoundationReviewApplyAll`.
+`:AIProofreadApply` and
+`:AIProofreadApplyAll`.
 
 Review completion shall never apply a correction by itself.
 
@@ -1679,6 +1703,257 @@ buffer unchanged.
 Tests shall cover individual application, atomic bulk
 application, overlap rejection, stale text, extmark movement,
 duplicate application prevention and single-step undo.
+
+=== ADR-030: Dismiss Individual Recommendations
+
+Status:: Accepted
+Date:: 2026-11-18
+Refines:: ADR-029
+
+==== Context
+
+Not every valid recommendation should be applied.
+
+Leaving a rejected recommendation in quickfix makes it
+difficult to distinguish outstanding work from an item the
+author has already considered.
+
+==== Decision
+
+Provide `ignore()` in the public Lua API and
+`:AIProofreadIgnore` as a user command.
+
+Ignoring shall:
+
+. Leave the source buffer unchanged.
+. Mark the current finding as ignored.
+. Remove its extmark and quickfix entry.
+. Select the next outstanding quickfix entry.
+. Exclude the finding from subsequent bulk application.
+
+A new review may report the same issue again.
+
+==== Rationale
+
+* Treats quickfix as a queue of outstanding recommendations.
+* Preserves authorial control without retaining resolved
+  workflow items.
+* Keeps ignored findings out of bulk application.
+* Requires no persistent dictionary or suppression policy.
+
+==== Consequences
+
+Ignore state lasts only for the current published review.
+
+The plugin does not maintain a permanent ignore list.
+
+Tests shall verify that ignoring changes neither source text
+nor undo history, advances quickfix and excludes the finding
+from bulk application.
+
+=== ADR-031: Exact Visual-Selection Review
+
+Status:: Accepted
+Date:: 2026-11-18
+Refines:: ADR-010, ADR-011
+
+==== Context
+
+Complete-buffer review can be unnecessarily slow when the
+author wants feedback on only a small passage.
+
+Visual selections must retain original-buffer coordinates so
+that quickfix navigation and correction application remain
+safe.
+
+==== Decision
+
+Provide `review_selection()` in the public Lua API,
+`:AIProofreadSelection` as a command and a visual-mode
+review keymap.
+
+Characterwise and linewise selections shall be supported.
+Blockwise selections shall fail visibly because they are not
+a contiguous source range.
+
+The controller shall review only the selected byte range
+while retaining the complete buffer snapshot for markup
+protection, coordinate calculation and stale-result checks.
+
+==== Rationale
+
+* Reduces inference work for focused proofreading.
+* Preserves exact original-buffer coordinates.
+* Reuses the existing review, validation and quickfix path.
+* Avoids ambiguous semantics for discontiguous block ranges.
+
+==== Consequences
+
+Any change to the buffer while selection review is running
+shall invalidate the result.
+
+Selection boundaries are byte-oriented and shall include the
+complete final UTF-8 character.
+
+Tests shall cover exact submitted text and absolute quickfix
+coordinates.
+
+=== ADR-032: Asynchronous Model Preload
+
+Status:: Accepted
+Date:: 2026-11-18
+Refines:: ADR-014, ADR-015, ADR-025
+
+==== Context
+
+The first review may be delayed while Ollama loads the model.
+
+The target environment may already use
+`OLLAMA_KEEP_ALIVE` to control model residency.
+
+Neovim startup must not wait for model loading.
+
+==== Decision
+
+Add `ollama.preload`, defaulting to `false`.
+
+When enabled, `setup()` shall start an asynchronous
+`POST /api/generate` request containing the configured model,
+`stream: false` and no prompt.
+
+Add optional `ollama.keep_alive`.
+When supplied, it shall be sent with preload and review
+requests.
+When omitted, Ollama's configured `OLLAMA_KEEP_ALIVE`
+behaviour shall remain in effect.
+
+Preload failure shall produce a warning but shall not prevent
+Neovim startup or later review attempts.
+
+==== Rationale
+
+* Reduces first-review latency.
+* Does not block Neovim startup.
+* Complements existing Ollama residency configuration.
+* Keeps preloading explicitly opt-in because it consumes
+  memory before the first review.
+
+==== Consequences
+
+Enabling preload may cause immediate CPU, GPU and memory use
+when Neovim starts.
+
+The plugin shall not download a missing model.
+
+Health checking remains the explicit way to diagnose service
+or model availability.
+
+Tests shall verify asynchronous invocation, keep-alive
+propagation and non-generating preload payloads.
+
+=== ADR-033: Rename to ai-proofread.nvim
+
+Status:: Accepted
+Date:: 2026-11-18
+
+==== Context
+
+The original `foundation-review.nvim` name referred to the
+initial Apple Foundation Models direction.
+
+The plugin now uses configurable local Ollama models and its
+purpose is focused proofreading rather than one inference
+framework.
+
+==== Decision
+
+Rename the project and GitHub repository to
+`ai-proofread.nvim`.
+
+Use `ai-proofread` as the Lua module and runtime file stem,
+`AI Proofread` as the display name and `AIProofread` as the
+command prefix.
+
+Retain deprecated `foundation-review` Lua and
+`FoundationReview` command aliases for compatibility.
+
+==== Rationale
+
+* Describes the user-facing purpose.
+* Retains an explicit indication that inference is AI-based.
+* Avoids coupling the name to Apple Foundation Models.
+* Covers spelling, grammar and punctuation more accurately
+  than a grammar-only name.
+
+==== Consequences
+
+Installation URLs, help tags, configuration examples and
+the user's Neovim package specification shall use the new
+name.
+
+GitHub redirects from prior repository names may continue to
+work, but documentation shall use the canonical URL.
+
+=== ADR-034: Selectable fm and Ollama Backends
+
+Status:: Accepted
+Date:: 2026-11-18
+Supersedes:: ADR-014
+Refines:: ADR-013, ADR-015, ADR-018
+
+==== Context
+
+Ollama with Gemma provides better proofreading quality but
+requires installation and a model download.
+
+Current macOS systems provide the native `fm` command and an
+on-device Apple Foundation Model with no Ollama dependency.
+Earlier testing found that model less accurate, but it is
+fast and lowers the barrier to trying the plugin.
+
+==== Decision
+
+Support two configured local inference backends:
+
+`ollama`::
+The default, higher-quality backend using the existing local
+HTTP integration and configurable model.
+
+`fm`::
+An optional zero-download backend using
+`fm respond --model system --no-stream --greedy` with a
+packaged structured-output schema.
+
+Both backends shall use the same prompt contract,
+deterministic finding validator, quickfix presentation and
+application workflow.
+
+No automatic fallback shall occur between backends.
+Private Cloud Compute, Google Gemini and custom Swift helpers
+remain outside scope.
+
+==== Rationale
+
+* Provides an immediate native trial path on supported Macs.
+* Retains Ollama and Gemma for better proofreading quality.
+* Keeps all inference local.
+* Contains provider-specific transport behind adapters.
+* Prevents lower-quality model output bypassing validation.
+
+==== Consequences
+
+The configuration gains `backend`, `fm` and `ollama`
+sections.
+
+The health check validates only the selected backend.
+
+Ollama preload and keep-alive settings do not apply to `fm`.
+
+The documentation shall state clearly that `fm` has lower
+proofreading accuracy.
+
+Tests shall cover backend selection, structured `fm` output,
+cancellation and common validation after inference.
 
 == Decision Governance
 

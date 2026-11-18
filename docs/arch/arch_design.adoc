@@ -1,17 +1,18 @@
 
-= Foundation Review: Architecture and Design Guide
+= AI Proofread: Architecture and Design Guide
 :toc:
 :toclevels: 4
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.7
-:revdate: 2026-11-17
+:revnumber: 0.8
+:revdate: 2026-11-18
 
 == Architecture Overview
 
-Foundation Review is a Lua-based Neovim plugin providing
-on-demand British English proofreading through Ollama.
+AI Proofread is a Lua-based Neovim plugin providing
+on-demand British English proofreading through native
+Apple `fm` or local Ollama.
 
 The initial release supports exactly three checks:
 
@@ -23,7 +24,7 @@ The solution comprises three logical layers:
 
 . Neovim integration and presentation.
 . Document preparation, validation and orchestration.
-. Local inference through Ollama.
+. Selected local inference through `fm` or Ollama.
 
 All application-specific logic resides in Lua.
 
@@ -36,10 +37,12 @@ is required.
 The implemented plugin provides:
 
 * A stable `setup()`, `review()`, `cancel()`, `health()`,
-  `apply()` and `apply_all()` public API.
-* Review, cancellation, health, individual-application and
-  bulk-application commands.
+  `review_selection()`, `apply()`, `apply_all()` and
+  `ignore()` public API.
+* Review, cancellation, health, individual-application,
+  bulk-application and ignore commands.
 * Asynchronous, sequential Ollama requests.
+* Optional asynchronous model preload during setup.
 * A packaged three-category JSON Schema.
 * Plain text, Markdown and AsciiDoc adapters.
 * Length-preserving markup masking and per-byte source maps.
@@ -72,7 +75,7 @@ Ollama itself is the local inference service.
 
 == Logical Architecture
 
-[plantuml,foundation-review-architecture,svg]
+[plantuml,ai-proofread-architecture,svg]
 ----
 @startuml
 skinparam componentStyle rectangle
@@ -87,15 +90,18 @@ package "Neovim / Lua Plugin" {
   [Chunk Manager] as Chunk
   [Prompt Builder] as Prompt
   [Ollama Adapter] as Runner
+  [Apple fm Adapter] as FM
   [Finding Validator] as Validator
   [Quickfix Presenter] as Quickfix
   [Correction Applier] as Applier
 }
 
-package "Local Ollama Service" {
+package "Optional Local Ollama Service" {
   component "HTTP API" as API
   component "Configured Model\nGemma 4 12B" as Model
 }
+
+component "Native fm\nSystem Model" as NativeModel
 
 Commands --> Controller
 Config --> Controller
@@ -103,11 +109,15 @@ Controller --> Adapters
 Adapters --> Chunk
 Chunk --> Prompt
 Prompt --> Runner
+Prompt --> FM
 Runner --> API : JSON request
 API --> Model
 Model --> API : JSON response
 API --> Runner
 Runner --> Validator
+FM --> NativeModel : stdin / structured request
+NativeModel --> FM : JSON response
+FM --> Validator
 Validator --> Quickfix
 Quickfix --> Applier : selected or all findings
 Applier --> Controller : verify review state
@@ -117,7 +127,7 @@ Applier --> Controller : verify review state
 
 == Deployment Architecture
 
-[plantuml,foundation-review-deployment,svg]
+[plantuml,ai-proofread-deployment,svg]
 ----
 @startuml
 skinparam monochrome true
@@ -125,10 +135,10 @@ skinparam shadowing false
 
 node "Apple Silicon Mac" {
   node "Neovim Process" {
-    artifact "foundation-review.nvim\nLua modules" as Plugin
+    artifact "ai-proofread.nvim\nLua modules" as Plugin
   }
 
-  node "Local Ollama Service" {
+  node "Optional Local Ollama Service" {
     component "Ollama HTTP API\n127.0.0.1:11434" as API
     component "gemma4:12b-it-qat" as Model
   }
@@ -149,9 +159,9 @@ No automatic cloud fallback shall be implemented.
 
 [source,text]
 ----
-foundation-review.nvim/
+ai-proofread.nvim/
 ├── lua/
-│   └── foundation-review/
+│   └── ai-proofread/
 │       ├── init.lua
 │       ├── config.lua
 │       ├── controller.lua
@@ -166,14 +176,14 @@ foundation-review.nvim/
 │       ├── quickfix.lua
 │       └── apply.lua
 ├── plugin/
-│   └── foundation-review.lua
+│   └── ai-proofread.lua
 ├── tests/
 │   ├── minimal_init.lua
 │   ├── run.lua
 │   ├── fixtures/
 │   └── benchmark/
 ├── doc/
-│   └── foundation-review.txt
+│   └── ai-proofread.txt
 ├── README.adoc
 ├── docs/arch/
 ├── TODO.adoc
@@ -201,6 +211,7 @@ a|
 * The three supported proofreading checks.
 * British English conventions.
 * Ollama endpoint and model selection.
+* Optional preload and per-request keep-alive settings.
 * Timeout and chunk-size settings.
 * Quickfix presentation preferences.
 |===
@@ -355,6 +366,16 @@ without shell interpolation or command-line document text.
 A future native HTTP implementation may replace this
 transport without changing the review controller.
 
+=== Apple fm Adapter
+
+Responsible for invoking `fm respond` asynchronously with
+the system model, greedy generation and the packaged
+structured-output schema.
+
+Document text shall be supplied through standard input.
+The adapter shall decode the direct JSON response before the
+common validator processes its findings.
+
 === Finding Validator
 
 Responsible for:
@@ -385,6 +406,7 @@ Responsible for:
 
 * Applying the current quickfix correction.
 * Applying all remaining corrections from the latest review.
+* Ignoring the current recommendation.
 * Tracking validated ranges with buffer extmarks.
 * Verifying the exact validated source slice immediately
   before each edit.
@@ -403,14 +425,23 @@ The public API is:
 
 [source,lua]
 ----
-require("foundation-review").setup({
+require("ai-proofread").setup({
   language = "en-GB",
+  backend = "ollama",
 
   ollama = {
     url = "http://127.0.0.1:11434",
     model = "gemma4:12b-it-qat",
     temperature = 0,
     timeout_ms = 120000,
+    preload = false,
+    -- keep_alive = "1h",
+  },
+
+  fm = {
+    command = "fm",
+    model = "system",
+    timeout_ms = 30000,
   },
 
   filetypes = {
@@ -437,8 +468,10 @@ require("foundation-review").setup({
 
   keymaps = {
     review = "<leader>ar",
+    review_selection = "<leader>ar",
     apply = "<leader>aa",
     apply_all = "<leader>aA",
+    ignore = "<leader>ai",
   },
 })
 ----
@@ -453,12 +486,11 @@ proofreading-specific evaluation.
 
 === Prerequisites
 
-The plugin requires:
+The plugin requires Neovim 0.12 or later and either:
 
-* Neovim 0.12 or later.
-* A running local Ollama service.
-* An installed compatible language model.
-* Access to the configured loopback endpoint.
+* The native Apple `fm` command with the system model.
+* A running local Ollama service, an installed compatible
+  model and access to the configured loopback endpoint.
 
 The health command checks endpoint access and
 configured model availability through `/api/tags`.
@@ -492,6 +524,13 @@ Requests shall include:
 * JSON Schema output constraint.
 * Non-streaming response selection.
 * Temperature zero.
+* A configured `keep_alive` value when supplied.
+
+When preload is enabled, `setup()` shall start an
+asynchronous `/api/generate` request containing the model,
+`stream: false` and no prompt.
+If `keep_alive` is omitted, Ollama's configured
+`OLLAMA_KEEP_ALIVE` value governs model residency.
 
 Conceptual request:
 
@@ -749,7 +788,7 @@ be assumed to be valid Neovim column positions.
 
 == Review Lifecycle
 
-[plantuml,foundation-review-sequence,svg]
+[plantuml,ai-proofread-sequence,svg]
 ----
 @startuml
 skinparam monochrome true
@@ -759,10 +798,10 @@ actor Author
 participant Neovim
 participant "Lua Controller" as Lua
 participant "Ollama Adapter" as Adapter
-participant "Local Ollama Model" as Model
+participant "Selected Local Model" as Model
 participant "Correction Applier" as Applier
 
-Author -> Neovim : :FoundationReview
+Author -> Neovim : :AIProofread
 Neovim -> Lua : Start review
 Lua -> Lua : Check filetype
 Lua -> Lua : Snapshot buffer
@@ -867,7 +906,7 @@ Illustrative implementation:
 [source,lua]
 ----
 vim.fn.setqflist({}, "r", {
-  title = "Foundation Review",
+  title = "AI Proofread",
   items = findings,
 })
 
@@ -917,6 +956,11 @@ Applied findings shall not be applied again.
 Failed or stale findings shall remain in quickfix.
 Undo shall not recreate removed quickfix entries; a new
 review is required to repopulate the list.
+
+Ignoring shall mark the current finding as ignored, remove
+its extmark and quickfix entry, and select the next
+outstanding finding.
+Ignored findings shall not be included in bulk application.
 
 == Error Handling
 

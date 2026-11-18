@@ -1,0 +1,28 @@
+{
+  "type": "object",
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["correction"]
+          },
+          "category": {
+            "type": "string",
+            "enum": ["spelling", "grammar", "punctuation"]
+          },
+          "original": {"type": "string"},
+          "suggestion": {"type": "string"},
+          "message": {"type": "string"}
+        },
+        "required": ["type", "category", "original", "suggestion", "message"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["findings"],
+  "additionalProperties": false
+}

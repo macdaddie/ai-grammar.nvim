@@ -1,16 +1,17 @@
-local adapters = require("foundation-review.adapters")
-local apply = require("foundation-review.apply")
-local ollama = require("foundation-review.ollama")
-local prompt = require("foundation-review.prompt")
-local quickfix = require("foundation-review.quickfix")
-local validator = require("foundation-review.validate")
+local adapters = require("ai-proofread.adapters")
+local apply = require("ai-proofread.apply")
+local fm = require("ai-proofread.fm")
+local ollama = require("ai-proofread.ollama")
+local prompt = require("ai-proofread.prompt")
+local quickfix = require("ai-proofread.quickfix")
+local validator = require("ai-proofread.validate")
 
 local M = {}
 local active = {}
 local sequence = 0
 
 local function notify(message, level)
-  vim.notify("Foundation Review: " .. message, level or vim.log.levels.INFO)
+  vim.notify("AI Proofread: " .. message, level or vim.log.levels.INFO)
 end
 
 local function is_current(review)
@@ -61,14 +62,30 @@ local function process_next(review)
     return
   end
 
-  local payload = ollama.build_request(
-    review.config.ollama.model,
-    prompt.build(chunk.review_text, review.config.checks),
-    prompt.system
+  local review_prompt = prompt.build(
+    chunk.review_text,
+    review.config.checks
   )
-  local send = review.config._transport or ollama.request
+  local provider
+  local provider_config
+  local payload
+  if review.config.backend == "fm" then
+    provider = fm
+    provider_config = review.config.fm
+    payload = fm.build_request(review_prompt, prompt.system)
+  else
+    provider = ollama
+    provider_config = review.config.ollama
+    payload = ollama.build_request(
+      review.config.ollama.model,
+      review_prompt,
+      prompt.system,
+      review.config.ollama.keep_alive
+    )
+  end
+  local send = review.config._transport or provider.request
 
-  review.process = send(review.config.ollama, payload, function(err, document)
+  review.process = send(provider_config, payload, function(err, document)
     if not is_current(review) then
       return
     end
@@ -101,7 +118,7 @@ local function process_next(review)
   end)
 end
 
-function M.start(buffer, config)
+function M.start(buffer, config, selection)
   local filetype = vim.bo[buffer].filetype
   if not config.filetypes[filetype] or not adapters.supports(filetype) then
     notify("unsupported filetype: " .. filetype, vim.log.levels.ERROR)
@@ -118,7 +135,8 @@ function M.start(buffer, config)
     filetype,
     text,
     config.review.chunk_size,
-    config.review.hard_limit
+    config.review.hard_limit,
+    selection
   )
   if not chunks then
     notify(err, vim.log.levels.ERROR)

@@ -1,4 +1,4 @@
--- Foundation Review: Configuration
+-- AI Proofread: Configuration
 -- Default settings and user configuration validation
 
 local M = {}
@@ -6,12 +6,20 @@ local M = {}
 ---Default configuration
 M.default_config = {
   language = "en-GB",
+  backend = "ollama",
 
   ollama = {
     url = "http://127.0.0.1:11434",
     model = "gemma4:12b-it-qat",
     temperature = 0,
     timeout_ms = 120000,
+    preload = false,
+  },
+
+  fm = {
+    command = "fm",
+    model = "system",
+    timeout_ms = 30000,
   },
 
   filetypes = {
@@ -38,8 +46,10 @@ M.default_config = {
 
   keymaps = {
     review = "<leader>ar",
+    review_selection = "<leader>ar",
     apply = "<leader>aa",
     apply_all = "<leader>aA",
+    ignore = "<leader>ai",
   },
 }
 
@@ -59,6 +69,13 @@ function M.validate(config)
     return nil, "configuration must be a table"
   end
 
+  if config.backend
+    and config.backend ~= "ollama"
+    and config.backend ~= "fm"
+  then
+    return nil, "backend must be 'ollama' or 'fm'"
+  end
+
   if config.ollama then
     if config.ollama.url and not config.ollama.url:match("^https?://") then
       return nil, "ollama.url must be a valid HTTP/HTTPS URL"
@@ -67,6 +84,19 @@ function M.validate(config)
     if config.ollama.timeout_ms and config.ollama.timeout_ms < 1000 then
       return nil, "ollama.timeout_ms must be at least 1000ms"
     end
+
+    if config.ollama.preload ~= nil
+      and type(config.ollama.preload) ~= "boolean"
+    then
+      return nil, "ollama.preload must be a boolean"
+    end
+
+    if config.ollama.keep_alive ~= nil
+      and type(config.ollama.keep_alive) ~= "string"
+      and type(config.ollama.keep_alive) ~= "number"
+    then
+      return nil, "ollama.keep_alive must be a string or number"
+    end
   end
 
   if config.filetypes then
@@ -74,6 +104,18 @@ function M.validate(config)
       if type(enabled) ~= "boolean" then
         return nil, string.format("filetypes.%s must be a boolean", ft)
       end
+    end
+  end
+
+  if config.fm then
+    if config.fm.command
+      and (type(config.fm.command) ~= "string"
+        or config.fm.command == "")
+    then
+      return nil, "fm.command must be a non-empty string"
+    end
+    if config.fm.timeout_ms and config.fm.timeout_ms < 1000 then
+      return nil, "fm.timeout_ms must be at least 1000ms"
     end
   end
 

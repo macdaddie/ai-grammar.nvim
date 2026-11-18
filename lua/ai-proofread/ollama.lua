@@ -1,4 +1,4 @@
-local schema = require("foundation-review.schema")
+local schema = require("ai-proofread.schema")
 
 local M = {}
 
@@ -10,8 +10,8 @@ local function decode_json(value)
   return decoded
 end
 
-function M.build_request(model, prompt, system)
-  return {
+function M.build_request(model, prompt, system, keep_alive)
+  local request = {
     model = model,
     prompt = prompt,
     system = system,
@@ -20,6 +20,21 @@ function M.build_request(model, prompt, system)
     options = { temperature = 0 },
     format = schema,
   }
+  if keep_alive ~= nil then
+    request.keep_alive = keep_alive
+  end
+  return request
+end
+
+function M.build_preload_request(model, keep_alive)
+  local request = {
+    model = model,
+    stream = false,
+  }
+  if keep_alive ~= nil then
+    request.keep_alive = keep_alive
+  end
+  return request
 end
 
 function M.decode_response(body)
@@ -83,6 +98,40 @@ function M.request(config, payload, callback)
 
       local document, err = M.decode_response(result.stdout)
       callback(err, document, result)
+    end)
+  end)
+end
+
+function M.preload(config, callback)
+  local command = {
+    "curl",
+    "--silent",
+    "--show-error",
+    "--fail-with-body",
+    "--max-time",
+    tostring(math.ceil(config.timeout_ms / 1000)),
+    "--header",
+    "Content-Type: application/json",
+    "--data-binary",
+    "@-",
+    config.url .. "/api/generate",
+  }
+  local payload = M.build_preload_request(
+    config.model,
+    config.keep_alive
+  )
+
+  return vim.system(command, {
+    text = true,
+    stdin = vim.json.encode(payload),
+    timeout = config.timeout_ms,
+  }, function(result)
+    vim.schedule(function()
+      if result.code ~= 0 then
+        callback("transport_error", result)
+        return
+      end
+      callback(nil, result)
     end)
   end)
 end

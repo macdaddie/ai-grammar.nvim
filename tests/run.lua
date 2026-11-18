@@ -22,12 +22,15 @@ local function equal(actual, expected)
 end
 
 test("public API loads and merges setup options", function()
-  local review = require("foundation-review")
+  local review = require("ai-proofread")
+  equal(require("foundation-review"), review)
   equal(type(review.setup), "function")
   equal(type(review.review), "function")
+  equal(type(review.review_selection), "function")
   equal(type(review.cancel), "function")
   equal(type(review.apply), "function")
   equal(type(review.apply_all), "function")
+  equal(type(review.ignore), "function")
 
   review.setup({
     ollama = { model = "test-model" },
@@ -41,16 +44,47 @@ test("public API loads and merges setup options", function()
 end)
 
 test("plugin registers public commands", function()
-  vim.cmd.runtime("plugin/foundation-review.lua")
+  vim.cmd.runtime("plugin/ai-proofread.lua")
+  equal(vim.fn.exists(":AIProofread"), 2)
+  equal(vim.fn.exists(":AIProofreadSelection"), 2)
+  equal(vim.fn.exists(":AIProofreadCancel"), 2)
+  equal(vim.fn.exists(":AIProofreadHealth"), 2)
+  equal(vim.fn.exists(":AIProofreadApply"), 2)
+  equal(vim.fn.exists(":AIProofreadApplyAll"), 2)
+  equal(vim.fn.exists(":AIProofreadIgnore"), 2)
   equal(vim.fn.exists(":FoundationReview"), 2)
-  equal(vim.fn.exists(":FoundationReviewCancel"), 2)
-  equal(vim.fn.exists(":FoundationReviewHealth"), 2)
   equal(vim.fn.exists(":FoundationReviewApply"), 2)
-  equal(vim.fn.exists(":FoundationReviewApplyAll"), 2)
+end)
+
+test("setup can preload the configured model asynchronously", function()
+  local review = require("ai-proofread")
+  local called = false
+  review.setup({
+    ollama = {
+      model = "preload-model",
+      preload = true,
+      keep_alive = "1h",
+    },
+    keymaps = {
+      review = false,
+      review_selection = false,
+      apply = false,
+      apply_all = false,
+      ignore = false,
+    },
+    _preload_transport = function(config, callback)
+      called = true
+      equal(config.model, "preload-model")
+      equal(config.keep_alive, "1h")
+      callback(nil)
+      return { kill = function() end }
+    end,
+  })
+  equal(called, true)
 end)
 
 test("configuration rejects removed proofreading checks", function()
-  local config = require("foundation-review.config")
+  local config = require("ai-proofread.config")
   local valid, err = config.validate({
     checks = { sentence_readability = true },
   })
@@ -58,8 +92,15 @@ test("configuration rejects removed proofreading checks", function()
   equal(err, "unsupported check: sentence_readability")
 end)
 
+test("configuration validates the inference backend", function()
+  local config = require("ai-proofread.config")
+  local valid, err = config.validate({ backend = "cloud" })
+  equal(valid, nil)
+  equal(err, "backend must be 'ollama' or 'fm'")
+end)
+
 test("validator maps a UTF-8 finding to a line-local byte column", function()
-  local validator = require("foundation-review.validate")
+  local validator = require("ai-proofread.validate")
   local text = "One café has teh colour."
   local map = {}
   for byte = 1, #text do
@@ -87,7 +128,7 @@ test("validator maps a UTF-8 finding to a line-local byte column", function()
 end)
 
 test("validator rejects an ambiguous exact quotation", function()
-  local validator = require("foundation-review.validate")
+  local validator = require("ai-proofread.validate")
   local text = "teh first and teh second"
   local map = {}
   for byte = 1, #text do
@@ -111,7 +152,7 @@ test("validator rejects an ambiguous exact quotation", function()
 end)
 
 test("validator retains source text for a whitespace-collapsed match", function()
-  local validator = require("foundation-review.validate")
+  local validator = require("ai-proofread.validate")
   local text = "This sentence is hard\nwrapped here."
   local map = {}
   for byte = 1, #text do
@@ -135,7 +176,7 @@ test("validator retains source text for a whitespace-collapsed match", function(
 end)
 
 test("validator rejects a finding that intersects protected content", function()
-  local validator = require("foundation-review.validate")
+  local validator = require("ai-proofread.validate")
   local text = "Use `teh_code` here."
   local map = {}
   for byte = 1, #text do
@@ -162,7 +203,7 @@ test("validator rejects a finding that intersects protected content", function()
 end)
 
 test("plain-text chunks preserve exact source bytes", function()
-  local adapters = require("foundation-review.adapters")
+  local adapters = require("ai-proofread.adapters")
   local text = "First paragraph.\n\nSecond paragraph."
   local chunks = adapters.prepare("text", text, 20)
 
@@ -175,7 +216,7 @@ test("plain-text chunks preserve exact source bytes", function()
 end)
 
 test("AsciiDoc adapter masks source blocks without moving prose", function()
-  local adapters = require("foundation-review.adapters")
+  local adapters = require("ai-proofread.adapters")
   local text = table.concat({
     "Intro teh.",
     "",
@@ -198,7 +239,7 @@ test("AsciiDoc adapter masks source blocks without moving prose", function()
 end)
 
 test("Markdown adapter masks frontmatter and fenced code", function()
-  local adapters = require("foundation-review.adapters")
+  local adapters = require("ai-proofread.adapters")
   local text = table.concat({
     "---",
     "title: Teh title",
@@ -219,17 +260,19 @@ test("Markdown adapter masks frontmatter and fenced code", function()
 end)
 
 test("Ollama request enforces deterministic structured output", function()
-  local ollama = require("foundation-review.ollama")
+  local ollama = require("ai-proofread.ollama")
   local request = ollama.build_request(
     "test-model",
     "Review this text.",
-    "Proofread British English prose."
+    "Proofread British English prose.",
+    "1h"
   )
 
   equal(request.model, "test-model")
   equal(request.stream, false)
   equal(request.think, false)
   equal(request.options.temperature, 0)
+  equal(request.keep_alive, "1h")
   equal(request.format.type, "object")
   equal(
     request.format.properties.findings.items.properties.type.enum,
@@ -245,8 +288,69 @@ test("Ollama request enforces deterministic structured output", function()
   )
 end)
 
+test("Ollama preload request loads without generating text", function()
+  local ollama = require("ai-proofread.ollama")
+  equal(
+    ollama.build_preload_request("test-model", "1h"),
+    {
+      model = "test-model",
+      stream = false,
+      keep_alive = "1h",
+    }
+  )
+end)
+
+test("fm adapter builds and decodes a structured request", function()
+  local fm = require("ai-proofread.fm")
+  equal(
+    fm.build_request("Review this.", "Proofread British English."),
+    {
+      prompt = "Review this.",
+      system = "Proofread British English.",
+    }
+  )
+  local document, err = fm.decode_response(
+    vim.json.encode({ findings = {} })
+  )
+  equal(err, nil)
+  equal(document, { findings = {} })
+end)
+
+test("review can use the native fm backend", function()
+  local review = require("ai-proofread")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, { "teh text" })
+
+  local received_config
+  local received_payload
+  review.setup({
+    backend = "fm",
+    keymaps = {
+      review = false,
+      review_selection = false,
+      apply = false,
+      apply_all = false,
+      ignore = false,
+    },
+    quickfix = { auto_open = false },
+    _transport = function(config, payload, callback)
+      received_config = config
+      received_payload = payload
+      callback(nil, { findings = {} })
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  equal(received_config.command, "fm")
+  assert(received_payload.prompt:find("teh text", 1, true))
+  equal(received_payload.system, require("ai-proofread.prompt").system)
+end)
+
 test("Ollama response decoder returns the findings envelope", function()
-  local ollama = require("foundation-review.ollama")
+  local ollama = require("ai-proofread.ollama")
   local model_document = vim.json.encode({
     findings = {
       {
@@ -266,7 +370,7 @@ test("Ollama response decoder returns the findings envelope", function()
 end)
 
 test("Ollama response decoder rejects empty and malformed output", function()
-  local ollama = require("foundation-review.ollama")
+  local ollama = require("ai-proofread.ollama")
 
   local document, malformed = ollama.decode_response("not json")
   equal(document, nil)
@@ -280,7 +384,7 @@ test("Ollama response decoder rejects empty and malformed output", function()
 end)
 
 test("public review publishes validated findings to quickfix", function()
-  local review = require("foundation-review")
+  local review = require("ai-proofread")
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buffer)
   vim.bo[buffer].filetype = "text"
@@ -312,20 +416,71 @@ test("public review publishes validated findings to quickfix", function()
   review.review()
 
   local quickfix = vim.fn.getqflist({ items = 1, title = 1 })
-  equal(quickfix.title, "Foundation Review")
+  equal(quickfix.title, "AI Proofread")
   equal(#quickfix.items, 1)
   equal(quickfix.items[1].bufnr, buffer)
   equal(quickfix.items[1].lnum, 1)
   equal(quickfix.items[1].col, 10)
   equal(quickfix.items[1].end_lnum, 1)
   equal(quickfix.items[1].end_col, 12)
-  assert(quickfix.items[1].user_data.foundation_review_id)
+  assert(quickfix.items[1].user_data.ai_proofread_id)
   assert(quickfix.items[1].text:find("the", 1, true))
   equal(requested.think, false)
 end)
 
+test("visual review submits and locates only selected text", function()
+  local review = require("ai-proofread")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "Ignore this.",
+    "Review teh only.",
+    "Ignore sentance.",
+  })
+
+  local requested
+  review.setup({
+    keymaps = {
+      review = false,
+      review_selection = false,
+      apply = false,
+      apply_all = false,
+      ignore = false,
+    },
+    quickfix = { auto_open = false },
+    _transport = function(_, payload, callback)
+      requested = payload
+      callback(nil, {
+        findings = {
+          {
+            type = "correction",
+            category = "spelling",
+            original = "teh",
+            suggestion = "the",
+            message = "Incorrect spelling.",
+          },
+        },
+      })
+      return { kill = function() end }
+    end,
+  })
+
+  vim.api.nvim_win_set_cursor(0, { 2, 7 })
+  vim.cmd([[execute "normal! v2l\<Esc>"]])
+  review.review_selection()
+
+  assert(requested.prompt:find("\nteh", 1, true))
+  equal(requested.prompt:find("Ignore this.", 1, true), nil)
+  equal(requested.prompt:find("Ignore sentance.", 1, true), nil)
+  local quickfix = vim.fn.getqflist({ items = 1 })
+  equal(#quickfix.items, 1)
+  equal(quickfix.items[1].lnum, 2)
+  equal(quickfix.items[1].col, 8)
+end)
+
 test("review discards findings when the buffer becomes stale", function()
-  local review = require("foundation-review")
+  local review = require("ai-proofread")
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buffer)
   vim.bo[buffer].filetype = "text"
@@ -360,7 +515,7 @@ test("review discards findings when the buffer becomes stale", function()
 end)
 
 test("cancel terminates the active transport and ignores its callback", function()
-  local review = require("foundation-review")
+  local review = require("ai-proofread")
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buffer)
   vim.bo[buffer].filetype = "text"
@@ -390,7 +545,7 @@ test("cancel terminates the active transport and ignores its callback", function
 end)
 
 test("partial failure still publishes findings from successful chunks", function()
-  local review = require("foundation-review")
+  local review = require("ai-proofread")
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buffer)
   vim.bo[buffer].filetype = "text"
@@ -434,7 +589,7 @@ test("partial failure still publishes findings from successful chunks", function
 end)
 
 test("long paragraphs split at sentence boundaries", function()
-  local adapters = require("foundation-review.adapters")
+  local adapters = require("ai-proofread.adapters")
   local text = "First sentence. Second sentence."
   local chunks = adapters.prepare("text", text, 17)
 
@@ -445,7 +600,7 @@ test("long paragraphs split at sentence boundaries", function()
 end)
 
 test("prompt requires minimal spans for corrections", function()
-  local prompt = require("foundation-review.prompt")
+  local prompt = require("ai-proofread.prompt")
   local content = prompt.build("This has teh error.", {
     spelling = true,
   })
@@ -458,7 +613,7 @@ test("prompt requires minimal spans for corrections", function()
 end)
 
 test("validator rejects removed proofreading categories", function()
-  local validator = require("foundation-review.validate")
+  local validator = require("ai-proofread.validate")
   local finding, reason = validator.validate_finding({
     type = "correction",
     category = "word_choice",
@@ -475,8 +630,25 @@ test("validator rejects removed proofreading categories", function()
   equal(reason, "unsupported_category")
 end)
 
+test("validator rejects a correction that changes nothing", function()
+  local validator = require("ai-proofread.validate")
+  local finding, reason = validator.validate_finding({
+    type = "correction",
+    category = "spelling",
+    original = "wrong",
+    suggestion = "wrong",
+    message = "No change.",
+  }, {
+    review_text = "wrong",
+    document_text = "wrong",
+    offset_map = { 1, 2, 3, 4, 5 },
+  })
+  equal(finding, nil)
+  equal(reason, "no_change")
+end)
+
 test("applies the current quickfix correction", function()
-  local review = require("foundation-review")
+  local review = require("ai-proofread")
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buffer)
   vim.bo[buffer].filetype = "text"
@@ -513,7 +685,7 @@ test("applies the current quickfix correction", function()
 end)
 
 test("bulk application is one undoable change", function()
-  local review = require("foundation-review")
+  local review = require("ai-proofread")
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buffer)
   vim.bo[buffer].filetype = "text"
@@ -565,7 +737,7 @@ test("bulk application is one undoable change", function()
 end)
 
 test("remaining corrections follow an individually applied edit", function()
-  local review = require("foundation-review")
+  local review = require("ai-proofread")
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buffer)
   vim.bo[buffer].filetype = "text"
@@ -613,8 +785,67 @@ test("remaining corrections follow an individually applied edit", function()
   equal(#vim.fn.getqflist(), 0)
 end)
 
+test("ignored corrections are removed and excluded from apply all", function()
+  local review = require("ai-proofread")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "Teeh cats is ready.",
+  })
+
+  review.setup({
+    keymaps = {
+      review = false,
+      apply = false,
+      apply_all = false,
+      ignore = false,
+    },
+    quickfix = { auto_open = false },
+    _transport = function(_, _, callback)
+      callback(nil, {
+        findings = {
+          {
+            type = "correction",
+            category = "spelling",
+            original = "Teeh",
+            suggestion = "The",
+            message = "Incorrect spelling.",
+          },
+          {
+            type = "correction",
+            category = "grammar",
+            original = "cats is",
+            suggestion = "cats are",
+            message = "Use plural agreement.",
+          },
+        },
+      })
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  equal(review.ignore(), true)
+  equal(
+    vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
+    { "Teeh cats is ready." }
+  )
+  local remaining = vim.fn.getqflist({ idx = 0, items = 1 })
+  equal(#remaining.items, 1)
+  equal(remaining.idx, 1)
+  assert(remaining.items[1].text:find("plural", 1, true))
+
+  equal(review.apply_all(), true)
+  equal(
+    vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
+    { "Teeh cats are ready." }
+  )
+  equal(#vim.fn.getqflist(), 0)
+end)
+
 test("bulk application aborts when any source text changed", function()
-  local review = require("foundation-review")
+  local review = require("ai-proofread")
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buffer)
   vim.bo[buffer].filetype = "text"
@@ -660,7 +891,7 @@ test("bulk application aborts when any source text changed", function()
 end)
 
 test("bulk application rejects overlapping corrections", function()
-  local apply = require("foundation-review.apply")
+  local apply = require("ai-proofread.apply")
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buffer)
   vim.api.nvim_buf_set_lines(buffer, 0, -1, false, { "abcdef" })
@@ -690,7 +921,7 @@ test("bulk application rejects overlapping corrections", function()
 end)
 
 test("sentences beyond the hard limit are reported without inference", function()
-  local review = require("foundation-review")
+  local review = require("ai-proofread")
   local buffer = vim.api.nvim_create_buf(false, true)
   vim.api.nvim_set_current_buf(buffer)
   vim.bo[buffer].filetype = "text"
@@ -711,13 +942,13 @@ test("sentences beyond the hard limit are reported without inference", function(
   review.review()
   local quickfix = vim.fn.getqflist({ context = 1, title = 1 })
   equal(requests, 0)
-  equal(quickfix.title, "Foundation Review")
+  equal(quickfix.title, "AI Proofread")
   equal(quickfix.context.complete, false)
   equal(quickfix.context.unreviewable_sections, 1)
 end)
 
 test("validator rejects a non-array findings envelope", function()
-  local validator = require("foundation-review.validate")
+  local validator = require("ai-proofread.validate")
   local findings, reason = validator.validate_document({
     findings = { unexpected = "object" },
   })

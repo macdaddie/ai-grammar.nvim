@@ -3,6 +3,7 @@
 :FoundationReviewApplyAll	foundation-review.txt	/*:FoundationReviewApplyAll*
 :FoundationReviewCancel	foundation-review.txt	/*:FoundationReviewCancel*
 :FoundationReviewHealth	foundation-review.txt	/*:FoundationReviewHealth*
+:FoundationReviewIgnore	foundation-review.txt	/*:FoundationReviewIgnore*
 foundation-review	foundation-review.txt	/*foundation-review*
 foundation-review-commands	foundation-review.txt	/*foundation-review-commands*
 foundation-review-introduction	foundation-review.txt	/*foundation-review-introduction*

@@ -15,7 +15,7 @@ local function entry(buffer, finding)
       finding.suggestion
     ),
     user_data = {
-      foundation_review_id = finding.application_id,
+      ai_proofread_id = finding.application_id,
     },
   }
 end
@@ -31,7 +31,7 @@ function M.publish(buffer, result, config)
   end)
 
   vim.fn.setqflist({}, "r", {
-    title = "Foundation Review",
+    title = "AI Proofread",
     items = items,
     context = {
       complete = result.complete,
