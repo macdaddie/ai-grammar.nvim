@@ -901,6 +901,7 @@ Individual application shall:
 . Require an exact match with the finding's `source_text`.
 . Replace that range with `suggestion`.
 . Mark the finding as applied.
+. Remove its quickfix entry and select the next entry.
 
 Bulk application shall:
 
@@ -910,8 +911,12 @@ Bulk application shall:
 . Abort without edits if any preflight check fails.
 . Apply edits from the end of the buffer towards the start.
 . Join the changes into one Neovim undo step.
+. Remove all applied entries from quickfix.
 
 Applied findings shall not be applied again.
+Failed or stale findings shall remain in quickfix.
+Undo shall not recreate removed quickfix entries; a new
+review is required to repopulate the list.
 
 == Error Handling
 

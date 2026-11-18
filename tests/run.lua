@@ -509,6 +509,7 @@ test("applies the current quickfix correction", function()
     vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
     { "This has the mistake." }
   )
+  equal(#vim.fn.getqflist(), 0)
 end)
 
 test("bulk application is one undoable change", function()
@@ -555,6 +556,7 @@ test("bulk application is one undoable change", function()
     vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
     { "The cats are ready." }
   )
+  equal(#vim.fn.getqflist(), 0)
   vim.cmd("undo")
   equal(
     vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
@@ -599,11 +601,16 @@ test("remaining corrections follow an individually applied edit", function()
 
   review.review()
   equal(review.apply(), true)
+  local remaining = vim.fn.getqflist({ idx = 0, items = 1 })
+  equal(#remaining.items, 1)
+  equal(remaining.idx, 1)
+  assert(remaining.items[1].text:find("plural", 1, true))
   equal(review.apply_all(), true)
   equal(
     vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
     { "The cats are ready." }
   )
+  equal(#vim.fn.getqflist(), 0)
 end)
 
 test("bulk application aborts when any source text changed", function()
@@ -649,6 +656,7 @@ test("bulk application aborts when any source text changed", function()
     vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
     { "Teh dogs is ready." }
   )
+  equal(#vim.fn.getqflist(), 2)
 end)
 
 test("bulk application rejects overlapping corrections", function()

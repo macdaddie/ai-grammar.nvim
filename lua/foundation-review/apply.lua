@@ -16,6 +16,43 @@ local function split_replacement(text)
   return vim.split(text, "\n", { plain = true })
 end
 
+local function remove_quickfix_entries(ids)
+  local quickfix = vim.fn.getqflist({
+    id = 0,
+    idx = 0,
+    items = 1,
+    title = 1,
+    context = 1,
+  })
+  if quickfix.title ~= "Foundation Review" then
+    return
+  end
+
+  local items = {}
+  for _, item in ipairs(quickfix.items) do
+    local user_data = item.user_data
+    local id = type(user_data) == "table"
+        and user_data.foundation_review_id
+      or nil
+    if not ids[id] then
+      items[#items + 1] = item
+    end
+  end
+
+  vim.fn.setqflist({}, "r", {
+    id = quickfix.id,
+    title = quickfix.title,
+    context = quickfix.context,
+    items = items,
+  })
+  if #items > 0 then
+    vim.fn.setqflist({}, "a", {
+      id = quickfix.id,
+      idx = math.min(quickfix.idx, #items),
+    })
+  end
+end
+
 local function resolve(finding)
   local mark = vim.api.nvim_buf_get_extmark_by_id(
     finding.buffer,
@@ -156,6 +193,7 @@ function M.current()
     namespace,
     finding.extmark
   )
+  remove_quickfix_entries({ [finding.application_id] = true })
   notify("applied correction")
   return true
 end
@@ -241,6 +279,11 @@ function M.all()
       correction.finding.extmark
     )
   end
+  local applied_ids = {}
+  for _, correction in ipairs(pending) do
+    applied_ids[correction.finding.application_id] = true
+  end
+  remove_quickfix_entries(applied_ids)
   notify(string.format("applied %d corrections", #pending))
   return true
 end

@@ -27,6 +27,8 @@
 * Cancellation and stale-buffer protection.
 * Exact-source preflight, overlap rejection and one-step undo
   for bulk correction application.
+* Successful fixes leave only outstanding recommendations in
+  quickfix; failed fixes remain visible.
 * `vim.pack`, lazy.nvim and native-package documentation.
 * Headless Neovim test workflow.
 * MIT Licence and renamed public GitHub repository.

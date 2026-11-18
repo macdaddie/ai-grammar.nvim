@@ -160,6 +160,13 @@ Bulk application preflights every correction, rejects stale
 or overlapping ranges, and applies all corrections as one
 undoable change.
 
+After an individual correction succeeds, its quickfix entry
+is removed and the next outstanding recommendation becomes
+current.
+After bulk application succeeds, all applied entries are
+removed and the quickfix list is empty.
+Failed or stale corrections remain in the list.
+
 If text covered by a recommendation has changed since the
 review, that recommendation is not applied.
 If any bulk correction is stale or overlaps another
@@ -170,6 +177,8 @@ After bulk application, one `u` restores the buffer to its
 state before the fixes were applied.
 Individually applied corrections use Neovim's normal undo
 history.
+Undo does not restore removed quickfix entries; run
+`:FoundationReview` again to produce a new review.
 
 Quickfix entries contain source-verified start and end byte
 positions. All corrections use warning severity.

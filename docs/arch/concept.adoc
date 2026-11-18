@@ -132,6 +132,13 @@ one undo step.
 Failure of any bulk preflight check shall leave the buffer
 unchanged.
 
+A successfully applied correction shall be removed from the
+quickfix list.
+Individual application shall select the next outstanding
+finding, and successful bulk application shall leave the
+list empty.
+Failed corrections shall remain visible.
+
 === Out of Scope
 
 The initial release shall not include:
