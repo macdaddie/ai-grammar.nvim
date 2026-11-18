@@ -43,6 +43,10 @@
 * Optional Ollama model preload respects
   `OLLAMA_KEEP_ALIVE` unless a per-request `keep_alive` value
   is configured.
+* Preload has a separate timeout, classifies transport
+  failures and reports them only at debug level.
+* The health command lists the models currently loaded in
+  Ollama.
 * ADR-034 adds selectable native `fm` and Ollama backends
   behind a shared prompt and validator.
 * The native `fm` adapter uses the packaged structured-output

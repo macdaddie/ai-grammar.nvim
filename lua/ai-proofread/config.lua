@@ -14,6 +14,7 @@ M.default_config = {
     temperature = 0,
     timeout_ms = 120000,
     preload = false,
+    preload_timeout_ms = 120000,
   },
 
   fm = {
@@ -89,6 +90,12 @@ function M.validate(config)
       and type(config.ollama.preload) ~= "boolean"
     then
       return nil, "ollama.preload must be a boolean"
+    end
+
+    if config.ollama.preload_timeout_ms
+      and config.ollama.preload_timeout_ms < 1000
+    then
+      return nil, "ollama.preload_timeout_ms must be at least 1000ms"
     end
 
     if config.ollama.keep_alive ~= nil

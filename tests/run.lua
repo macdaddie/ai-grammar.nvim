@@ -300,6 +300,52 @@ test("Ollama preload request loads without generating text", function()
   )
 end)
 
+test("Ollama preload timeout is configurable", function()
+  local config = require("ai-proofread.config")
+  equal(config.merge({}).ollama.preload_timeout_ms, 120000)
+
+  local valid, err = config.validate({
+    ollama = { preload_timeout_ms = 500 },
+  })
+  equal(valid, nil)
+  equal(err, "ollama.preload_timeout_ms must be at least 1000ms")
+end)
+
+test("Ollama failures are classified for the user", function()
+  local ollama = require("ai-proofread.ollama")
+
+  local timeout_code, timeout_detail = ollama.classify_failure({ code = 28 })
+  equal(timeout_code, "timeout")
+  equal(type(timeout_detail), "string")
+
+  local refused = ollama.classify_failure({ code = 7 })
+  equal(refused, "connection_failed")
+
+  local failed, detail = ollama.classify_failure({
+    code = 22,
+    stderr = "curl: (22) The requested URL returned error: 500\n",
+  })
+  equal(failed, "transport_error")
+  equal(detail, "curl: (22) The requested URL returned error: 500")
+end)
+
+test("Ollama loaded models are decoded from /api/ps", function()
+  local ollama = require("ai-proofread.ollama")
+
+  equal(
+    ollama.parse_loaded_models(vim.json.encode({
+      models = {
+        { name = "first:latest" },
+        { model = "second:latest" },
+      },
+    })),
+    { "first:latest", "second:latest" }
+  )
+
+  local invalid = ollama.parse_loaded_models("not json")
+  equal(invalid, nil)
+end)
+
 test("fm adapter builds and decodes a structured request", function()
   local fm = require("ai-proofread.fm")
   equal(

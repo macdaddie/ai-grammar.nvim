@@ -8,6 +8,7 @@ CONTENTS                                              *ai-proofread*
 3. Commands                             |ai-proofread-commands|
 4. Configuration                        |ai-proofread-configuration|
 5. Backends and Privacy                 |ai-proofread-backends|
+6. Troubleshooting                      |ai-proofread-troubleshooting|
 
 =============================================================================
 1. INTRODUCTION                          *ai-proofread-introduction*
@@ -30,6 +31,7 @@ editorial categories and sentence rewriting are out of scope.
       url = "http://127.0.0.1:11434",
       model = "gemma4:12b-it-qat",
       preload = true,
+      -- preload_timeout_ms = 120000,
       -- keep_alive = "1h",
     },
   })
@@ -107,6 +109,9 @@ ollama~
         timeout_ms    Request timeout. Default: 120000.
         preload       Load the model asynchronously during setup().
                       Default: false.
+        preload_timeout_ms
+                      Bound for the asynchronous preload attempt.
+                      Default: 120000.
         keep_alive    Per-request model residency duration. When omitted,
                       Ollama uses OLLAMA_KEEP_ALIVE.
 
@@ -156,5 +161,34 @@ local Ollama endpoint. No cloud fallback is implemented.
 
 Ollama preload and keep-alive settings apply only to the Ollama backend.
 The fm model is managed by macOS.
+
+=============================================================================
+6. TROUBLESHOOTING                    *ai-proofread-troubleshooting*
+
+Run |:AIProofreadHealth| before reviewing. For Ollama it reports the
+models currently held in memory.
+
+A quickfix title of "AI Proofread: review incomplete" means at least one
+chunk failed, timed out or exceeded the hard limit. Findings from
+successful chunks remain available.
+
+A preload request can time out while another model is loading or while
+the GPU is saturated. Preload failures are harmless and appear only at
+debug level. Increase ollama.preload_timeout_ms if the first load of a
+large model is consistently slower than the default.
+
+Ollama unloads idle models and queues requests when a model does not fit
+in memory. By default it permits three models per GPU. Check the
+effective server settings with:
+
+>bash
+  ps eww -p "$(pgrep -f 'ollama serve' | head -1)" \
+    | tr ' ' '\n' | grep '^OLLAMA_'
+  ollama ps
+<
+
+The ollama stop command cannot interrupt an active generation. If a
+runner remains in Stopping..., restart the service only once other work
+is idle.
 
 vim:tw=78:ts=8:noet:ft=help:norl:

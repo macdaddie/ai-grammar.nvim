@@ -110,9 +110,13 @@ function M.setup(options)
   then
     local ollama = require("ai-proofread.ollama")
     local preload = current_config._preload_transport or ollama.preload
-    preload(current_config.ollama, function(preload_error)
+    preload(current_config.ollama, function(preload_error, _, detail)
       if preload_error then
-        notify("model preload failed: " .. preload_error, vim.log.levels.WARN)
+        local message = "model preload failed: " .. preload_error
+        if detail then
+          message = message .. ": " .. detail
+        end
+        notify(message, vim.log.levels.DEBUG)
       end
     end)
   end

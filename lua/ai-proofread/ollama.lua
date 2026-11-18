@@ -70,29 +70,56 @@ function M.decode_response(body)
   return document
 end
 
-function M.request(config, payload, callback)
-  local command = {
+local function generate_command(config, timeout_ms)
+  return {
     "curl",
     "--silent",
     "--show-error",
     "--fail-with-body",
     "--max-time",
-    tostring(math.ceil(config.timeout_ms / 1000)),
+    tostring(math.ceil(timeout_ms / 1000)),
     "--header",
     "Content-Type: application/json",
     "--data-binary",
     "@-",
     config.url .. "/api/generate",
   }
+end
 
-  return vim.system(command, {
+---Classify a failed curl invocation
+--
+-- @param result table|nil: Completed process result
+-- @return string: Stable failure code
+-- @return string|nil: Human-readable detail
+function M.classify_failure(result)
+  local code = type(result) == "table" and result.code or nil
+  if code == 28 or code == 124 then
+    return "timeout",
+      "the model may be queued behind another loaded model"
+  end
+  if code == 7 then
+    return "connection_failed",
+      "could not connect to the Ollama service"
+  end
+  if type(result) == "table" and type(result.stderr) == "string" then
+    local detail = vim.trim(result.stderr)
+    if detail ~= "" then
+      return "transport_error", detail
+    end
+  end
+  return "transport_error", nil
+end
+
+function M.request(config, payload, callback)
+  return vim.system(generate_command(config, config.timeout_ms), {
     text = true,
     stdin = vim.json.encode(payload),
     timeout = config.timeout_ms,
   }, function(result)
     vim.schedule(function()
       if result.code ~= 0 then
-        callback("transport_error", nil, result)
+        local code, detail = M.classify_failure(result)
+        callback(code, nil, result, detail)
         return
       end
 
@@ -103,37 +130,65 @@ function M.request(config, payload, callback)
 end
 
 function M.preload(config, callback)
-  local command = {
-    "curl",
-    "--silent",
-    "--show-error",
-    "--fail-with-body",
-    "--max-time",
-    tostring(math.ceil(config.timeout_ms / 1000)),
-    "--header",
-    "Content-Type: application/json",
-    "--data-binary",
-    "@-",
-    config.url .. "/api/generate",
-  }
+  local timeout_ms = config.preload_timeout_ms or config.timeout_ms
   local payload = M.build_preload_request(
     config.model,
     config.keep_alive
   )
 
-  return vim.system(command, {
+  return vim.system(generate_command(config, timeout_ms), {
     text = true,
     stdin = vim.json.encode(payload),
-    timeout = config.timeout_ms,
+    timeout = timeout_ms,
   }, function(result)
     vim.schedule(function()
       if result.code ~= 0 then
-        callback("transport_error", result)
+        local code, detail = M.classify_failure(result)
+        callback(code, result, detail)
         return
       end
       callback(nil, result)
     end)
   end)
+end
+
+---Decode the identifier list returned by /api/ps
+--
+-- @param body string: Raw response body
+-- @return table|nil: Loaded model names
+function M.parse_loaded_models(body)
+  local ps = decode_json(body)
+  if type(ps) ~= "table" or type(ps.models) ~= "table" then
+    return nil
+  end
+
+  local names = {}
+  for _, model in ipairs(ps.models) do
+    local name = model.name or model.model
+    if type(name) == "string" then
+      table.insert(names, name)
+    end
+  end
+  return names
+end
+
+---Report the models currently held in memory
+--
+-- @param config table: Ollama backend configuration
+-- @return table|nil: Loaded model names, or nil when unavailable
+function M.loaded_models(config)
+  local result = vim.system({
+    "curl",
+    "--silent",
+    "--show-error",
+    "--fail-with-body",
+    config.url .. "/api/ps",
+  }, { text = true }):wait()
+
+  if result.code ~= 0 then
+    return nil
+  end
+  return M.parse_loaded_models(result.stdout)
 end
 
 function M.check(config)

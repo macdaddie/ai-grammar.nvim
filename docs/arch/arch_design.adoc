@@ -5,7 +5,7 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.9
+:revnumber: 0.10
 :revdate: 2026-11-18
 
 == Architecture Overview
@@ -562,6 +562,20 @@ asynchronous `/api/generate` request containing the model,
 `stream: false` and no prompt.
 If `keep_alive` is omitted, Ollama's configured
 `OLLAMA_KEEP_ALIVE` value governs model residency.
+
+The preload attempt shall be bounded by
+`ollama.preload_timeout_ms` and shall never block startup or a
+later review.
+
+A failed preload shall be reported at debug level and shall not
+be treated as a backend failure.
+
+Transport failures shall be classified so that a timeout, a
+refused connection and a protocol error produce distinct
+messages.
+
+The health command shall report the models currently held by
+Ollama so that a busy or queued service is visible.
 
 Conceptual request:
 

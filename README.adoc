@@ -95,6 +95,7 @@ require("ai-proofread").setup({
     model = "gemma4:12b-it-qat",
     timeout_ms = 120000,
     preload = true,
+    -- preload_timeout_ms = 120000,
     -- keep_alive = "1h",
   },
   fm = {
@@ -283,6 +284,46 @@ keeps the model resident according to the effective
 keep-alive duration and therefore continues to use memory.
 These settings apply only to the Ollama backend; the native
 `fm` model is managed by macOS.
+
+Preload is best-effort. A failure is reported at debug level
+and never blocks startup or a later review.
+Set `ollama.preload_timeout_ms` to bound the attempt; the
+default is 120000.
+
+Ollama may hold several models at once when memory allows.
+By default it permits three models per GPU and queues
+requests until memory is available, so a preload can wait
+behind another model that is still loading.
+
+== Troubleshooting
+
+Run `:AIProofreadHealth` before reviewing. The message reports
+the selected backend and, for Ollama, the models currently held
+in memory.
+
+A quickfix title of `AI Proofread: review incomplete` means at
+least one chunk failed, timed out or exceeded the hard limit.
+Findings from successful chunks remain available.
+
+A preload request can time out while another model is loading
+or while the GPU is saturated. Preload failures are harmless
+and appear only at debug level.
+Increase `ollama.preload_timeout_ms` if the first load of a
+large model is consistently slower than the default.
+
+Ollama unloads idle models and queues new requests when a model
+does not fit in memory. Check the effective server settings:
+
+[source,bash]
+----
+ps eww -p "$(pgrep -f 'ollama serve' | head -1)" \
+  | tr ' ' '\n' | grep '^OLLAMA_'
+ollama ps
+----
+
+`ollama stop` cannot interrupt an active generation.
+If a runner remains in `Stopping...`, restart the service only
+once your other work is idle.
 
 == Development
 
