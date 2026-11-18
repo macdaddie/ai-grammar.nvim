@@ -5,7 +5,7 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.7
+:revnumber: 0.8
 :revdate: 2026-11-18
 
 == Purpose
@@ -449,6 +449,9 @@ Use structured JSON output with a versioned findings schema.
 The schema shall be supplied through Ollama's structured
 output interface.
 
+ADR-034 extends this requirement to native `fm`, which
+supplies the packaged schema through `--schema`.
+
 Schema compliance does not guarantee correctness.
 
 All findings require additional deterministic validation.
@@ -588,10 +591,13 @@ Do not permit automatic cloud fallback.
 
 The privacy requirement remains unchanged.
 
-The implementation now uses a locally hosted model
-through Ollama rather than Apple's system model.
+The implementation uses locally hosted model inference.
 
 No automatic cloud fallback is permitted.
+
+ADR-034 supersedes this decision by restoring native `fm`
+as an optional backend while retaining Ollama as the
+default.
 
 === ADR-010: Format-Aware Segmentation
 
@@ -1861,9 +1867,9 @@ Date:: 2026-11-18
 The original `foundation-review.nvim` name referred to the
 initial Apple Foundation Models direction.
 
-The plugin now uses configurable local Ollama models and its
-purpose is focused proofreading rather than one inference
-framework.
+The plugin now uses configurable local inference through
+Ollama and native `fm`, and its purpose is focused
+proofreading rather than one inference framework.
 
 ==== Decision
 

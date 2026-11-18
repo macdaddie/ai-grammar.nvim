@@ -5,15 +5,20 @@ CONTENTS                                              *ai-proofread*
 
 1. Introduction                         |ai-proofread-introduction|
 2. Setup                                |ai-proofread-setup|
-3. Commands                          |ai-proofread-commands|
+3. Commands                             |ai-proofread-commands|
+4. Configuration                        |ai-proofread-configuration|
+5. Backends and Privacy                 |ai-proofread-backends|
 
 =============================================================================
 1. INTRODUCTION                          *ai-proofread-introduction*
 
-AI Proofread checks prose with native Apple fm or a local Ollama model and
-places source-verified findings in the quickfix list.
+AI Proofread checks prose with Apple's native `fm` command or a local
+Ollama model and places source-verified findings in the quickfix list.
 
 Supported filetypes are `text`, `markdown` and `asciidoc`.
+
+Supported categories are spelling, grammar and punctuation. Other
+editorial categories and sentence rewriting are out of scope.
 
 =============================================================================
 2. SETUP                                        *ai-proofread-setup*
@@ -30,9 +35,12 @@ Supported filetypes are `text`, `markdown` and `asciidoc`.
   })
 <
 
-Set backend = "fm" to use Apple's native on-device Foundation Model instead
-of Ollama. This requires no downloaded Ollama model but provides lower
-proofreading quality. Both backends use the same source validation.
+Set backend = "fm" to use Apple's native on-device Foundation Model
+instead of Ollama. This requires no downloaded Ollama model but provides
+lower proofreading quality. Both backends use the same source validation.
+
+The plugin never downloads models. Run |:AIProofreadHealth| to check the
+selected backend and model before reviewing.
 
 =============================================================================
 3. COMMANDS                                  *ai-proofread-commands*
@@ -75,19 +83,78 @@ proofreading quality. Both backends use the same source validation.
         buffer. The entry is removed, the next recommendation is selected,
         and the ignored correction is excluded from bulk application.
 
-        The former foundation-review Lua module and FoundationReview commands
-        remain available as deprecated compatibility aliases.
+A suggestion that does not differ from the quoted source text is rejected
+and never reaches quickfix.
 
-        Undo does not restore removed quickfix entries. Run
-        :AIProofread again to create a new review.
+The former foundation-review Lua module and FoundationReview commands
+remain available as deprecated compatibility aliases.
 
-Model preloading~
+Undo does not restore removed quickfix entries. Run :AIProofread again to
+create a new review.
 
-Set `ollama.preload = true` to load the configured model asynchronously when
-setup() runs. Neovim startup is not blocked.
+=============================================================================
+4. CONFIGURATION                        *ai-proofread-configuration*
 
-If `ollama.keep_alive` is omitted, Ollama uses OLLAMA_KEEP_ALIVE. Set it to a
-duration such as "1h" to override that value for AI Proofread preload and
-review requests.
+backend~
+        "ollama" (default) or "fm".
+
+ollama~
+        url           Local Ollama endpoint. Default:
+                      "http://127.0.0.1:11434".
+        model         Ollama model identifier. Default:
+                      "gemma4:12b-it-qat".
+        temperature   Sampling temperature. Default: 0.
+        timeout_ms    Request timeout. Default: 120000.
+        preload       Load the model asynchronously during setup().
+                      Default: false.
+        keep_alive    Per-request model residency duration. When omitted,
+                      Ollama uses OLLAMA_KEEP_ALIVE.
+
+fm~
+        command       Native command name or path. Default: "fm".
+        model         Native model. Default: "system".
+        timeout_ms    Request timeout. Default: 30000.
+
+filetypes~
+        Allowlist for text, markdown and asciidoc. Unsupported filetypes
+        are not reviewed by default.
+
+checks~
+        Enable spelling, grammar and punctuation independently. Other
+        category names are rejected. Set a check to false to exclude it
+        from the prompt and from validation.
+
+review~
+        chunk_size    Byte budget per review chunk. Default: 2500.
+        hard_limit    Byte budget for a single reviewable section.
+                      Default: 12000.
+
+quickfix~
+        auto_open     Open the quickfix window when findings arrive.
+                      Default: true.
+
+keymaps~
+        review, review_selection, apply, apply_all and ignore accept a
+        mapping string. Set a mapping to false or "" to disable it.
+
+The configured model is provisional pending proofreading-specific
+evaluation.
+
+=============================================================================
+5. BACKENDS AND PRIVACY                      *ai-proofread-backends*
+
+Ollama is the default and provides better proofreading quality. The
+native fm backend is faster to start but substantially less capable;
+expect lower recall and more rejected findings. There is no automatic
+fallback between backends.
+
+The first use of fm may require accepting Apple's terms through the fm
+command.
+
+Document text is sent only to the native fm process or the configured
+local Ollama endpoint. No cloud fallback is implemented.
+
+Ollama preload and keep-alive settings apply only to the Ollama backend.
+The fm model is managed by macOS.
 
 vim:tw=78:ts=8:noet:ft=help:norl:

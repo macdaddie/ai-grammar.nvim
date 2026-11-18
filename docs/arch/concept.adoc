@@ -5,7 +5,7 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.8
+:revnumber: 0.9
 :revdate: 2026-11-18
 
 == Executive Summary
@@ -26,7 +26,7 @@ The plugin uses a selected local model through native Apple
 `fm` or Ollama and presents findings through Neovim's native
 quickfix list.
 
-The initial model is `gemma4:12b-it-qat`, subject to
+The initial Ollama model is `gemma4:12b-it-qat`, subject to
 further proofreading-specific evaluation.
 
 All application-specific logic shall be implemented in Lua.
@@ -198,17 +198,20 @@ scope decision and are not implied by the use of an LLM.
 |Inference interface
 |Apple `fm` CLI or Ollama local HTTP API
 
-|Initial model
+|Initial Ollama model
 |`gemma4:12b-it-qat`
 
-|Alternative model
+|Alternative Ollama model
 |`qwen3.5:9b-q4_K_M`
+
+|Native model
+|Apple system model through `fm`
 
 |Presentation
 |Neovim quickfix list
 
 |Runtime dependencies
-|Neovim and Ollama
+|Neovim and either `fm` or Ollama
 
 |External network dependency
 |None during local inference
@@ -220,17 +223,20 @@ hard-coded application dependencies.
 The implementation supports native Apple `fm` and local
 Ollama as explicitly selected backends.
 
-Apple Foundation Models is not an initial backend,
-following comparative feasibility testing.
+Native `fm` is an optional backend for immediate trial on
+supported Macs; it trades proofreading quality for zero
+model downloads and faster startup.
 
 == User Experience
 
 === Implementation Status
 
 The runnable plugin implements module loading,
-configuration, command registration, source mapping,
-protected markup, response decoding, individual and bulk
-correction application, cancellation, stale results,
+configuration, backend selection, command registration,
+complete-buffer and visual-selection reviews, source
+mapping, protected markup, response decoding, optional
+Ollama preload, individual and bulk correction application,
+recommendation ignoring, cancellation, stale results,
 partial failure and hard limits.
 
 === Normal Workflow
@@ -262,7 +268,7 @@ partial failure and hard limits.
 |Cancel the active review.
 
 |`:AIProofreadHealth`
-|Check Ollama availability, configuration and model status.
+|Check the selected backend, configuration and model status.
 
 |`:AIProofreadApply`
 |Apply the correction at the current quickfix entry.
@@ -428,7 +434,8 @@ language tools.
 Harper provides continuous language diagnostics.
 
 AI Proofread provides deliberate, context-sensitive
-proofreading and sentence restructuring.
+proofreading and localised spelling, grammar and punctuation
+corrections.
 
 The plugin shall not require Harper to be installed.
 
@@ -510,7 +517,8 @@ stop
 
 * The implementation shall remain Lua-only.
 * Neovim-native APIs shall be preferred.
-* Ollama integration shall be isolated in one module.
+* Each inference transport shall be isolated in its own
+  module behind a shared controller contract.
 * Filetype adapters shall be independently testable.
 * Third-party runtime dependencies shall be minimised.
 * Additional editorial categories shall not be introduced
@@ -541,6 +549,11 @@ a|[start=7]
 . All corrections can be applied atomically and undone
   as one operation.
 . Stale or overlapping corrections are not applied.
+. A characterwise or linewise visual selection can be
+  reviewed with original-buffer coordinates.
+. Suggestions that do not change the source text are
+  rejected.
+. Optional Ollama preload does not block editor startup.
 . The workflow functions without external connectivity.
 |===
 

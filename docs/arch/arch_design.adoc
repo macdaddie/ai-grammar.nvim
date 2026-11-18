@@ -5,7 +5,7 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.8
+:revnumber: 0.9
 :revdate: 2026-11-18
 
 == Architecture Overview
@@ -41,22 +41,27 @@ The implemented plugin provides:
   `ignore()` public API.
 * Review, cancellation, health, individual-application,
   bulk-application and ignore commands.
-* Asynchronous, sequential Ollama requests.
-* Optional asynchronous model preload during setup.
+* Asynchronous, sequential requests to the selected backend.
+* Selectable native Apple `fm` and local Ollama adapters.
+* Optional asynchronous Ollama model preload during setup.
 * A packaged three-category JSON Schema.
 * Plain text, Markdown and AsciiDoc adapters.
-* Length-preserving markup masking and per-byte source maps.
 * Exact and whitespace-collapsed quotation validation.
+* Rejection of no-op, stale, ambiguous and overlapping
+  findings.
+* Characterwise and linewise visual-selection review.
 * Cancellation, stale-buffer rejection and partial-failure
   handling.
 * Source-verified quickfix start and end positions.
-* User-triggered individual and bulk correction application.
-* Headless tests and a real-Ollama review path.
+* User-triggered individual and bulk correction application
+  plus individual recommendation ignoring.
+* Headless tests and real `fm` and Ollama review paths.
 
 Typst and RTF remain deferred until dedicated parsers can
 provide reversible source mappings.
 
-Ollama itself is the local inference service.
+Ollama and native `fm` supply local inference; exactly one
+backend is active for a review.
 
 == Architectural Principles
 
@@ -143,15 +148,18 @@ node "Apple Silicon Mac" {
     component "gemma4:12b-it-qat" as Model
   }
 
+  component "Native fm\nSystem Model" as Native
+
   Plugin --> API : HTTP / JSON
   API --> Model
+  Plugin --> Native : stdin / JSON
 }
 
 @enduml
 ----
 
-The initial deployment shall use a loopback Ollama
-endpoint.
+The deployment shall use a loopback Ollama endpoint or the
+local `fm` command according to the selected backend.
 
 No automatic cloud fallback shall be implemented.
 
@@ -167,6 +175,8 @@ ai-proofread.nvim/
 │       ├── controller.lua
 │       ├── health.lua
 │       ├── ollama.lua
+│       ├── fm.lua
+│       ├── fm_response_schema.json
 │       ├── prompt.lua
 │       ├── schema.lua
 │       ├── adapters.lua
@@ -210,8 +220,11 @@ Responsible for:
 a|
 * The three supported proofreading checks.
 * British English conventions.
+* Backend selection between `fm` and Ollama.
 * Ollama endpoint and model selection.
-* Optional preload and per-request keep-alive settings.
+* Native command, model and timeout selection.
+* Optional Ollama preload and per-request keep-alive
+  settings.
 * Timeout and chunk-size settings.
 * Quickfix presentation preferences.
 |===
@@ -316,8 +329,8 @@ Chunk boundaries shall prefer paragraphs and sections.
 Long paragraphs may be divided at sentence boundaries.
 
 Sentences above the configured hard limit are not submitted
-to Ollama. They are counted as unreviewable sections and
-make the review incomplete.
+to the selected backend. They are counted as unreviewable
+sections and make the review incomplete.
 
 === Prompt Module
 
@@ -372,9 +385,21 @@ Responsible for invoking `fm respond` asynchronously with
 the system model, greedy generation and the packaged
 structured-output schema.
 
-Document text shall be supplied through standard input.
-The adapter shall decode the direct JSON response before the
-common validator processes its findings.
+The adapter shall invoke the command asynchronously with
+`vim.system()`, supply document text through standard input
+and enforce the configured timeout.
+
+The command shall use the packaged
+`fm_response_schema.json` schema, a non-streaming response
+and greedy generation.
+
+The response is a direct JSON findings document, unlike the
+Ollama transport, which nests a JSON string inside a
+`response` field.
+
+The adapter shall decode that document before the common
+validator processes its findings and shall report process or
+decoding failures as transport errors.
 
 === Finding Validator
 
@@ -390,6 +415,7 @@ Responsible for:
 * Line and column verification.
 * Duplicate removal.
 * Rejection of ambiguous source locations.
+* Rejection of suggestions that do not change the source.
 * Tracking rejected findings by reason.
 
 === Quickfix Presenter
@@ -482,7 +508,7 @@ token counts.
 The configured model is provisional pending
 proofreading-specific evaluation.
 
-== Ollama Integration
+== Inference Backend Integration
 
 === Prerequisites
 
@@ -492,10 +518,15 @@ The plugin requires Neovim 0.12 or later and either:
 * A running local Ollama service, an installed compatible
   model and access to the configured loopback endpoint.
 
-The health command checks endpoint access and
-configured model availability through `/api/tags`.
+The health command validates only the selected backend.
 
-=== Service Discovery
+For Ollama it checks endpoint access and configured model
+availability through `/api/tags`.
+
+For native `fm` it checks that the configured command is
+executable.
+
+=== Ollama Service Discovery
 
 Illustrative checks:
 
@@ -512,9 +543,9 @@ is available locally.
 
 It shall not automatically download models.
 
-=== API Invocation
+=== Ollama API Invocation
 
-The implementation uses Ollama's `/api/generate` endpoint.
+The Ollama adapter uses the `/api/generate` endpoint.
 
 Requests shall include:
 
@@ -597,10 +628,10 @@ Models that support a thinking channel require
 `think` to be set to `false`, otherwise the `response`
 field can be empty.
 
-=== Neovim Process Execution
+=== Ollama Process Execution
 
-The initial transport may invoke `curl` asynchronously
-using `vim.system()`.
+The Ollama transport invokes `curl` asynchronously using
+`vim.system()`.
 
 Illustrative Lua:
 
@@ -637,6 +668,31 @@ No shell interpolation shall be used.
 
 Document contents shall not be placed in command-line
 arguments.
+
+=== Native fm Invocation
+
+The native adapter invokes the configured `fm` command with:
+
+[source,text]
+----
+fm respond --model system --no-stream --greedy \
+  --schema fm_response_schema.json \
+  --instructions "<system prompt>"
+----
+
+The review prompt is supplied through standard input.
+
+Document contents are never placed in command-line
+arguments.
+
+The adapter shall validate the process exit status and
+decode the direct JSON response.
+
+A non-zero exit or invalid response shall fail the chunk and
+shall never be treated as an absence of findings.
+
+The shared validator shall process the decoded findings in
+the same way as Ollama findings.
 
 === Schema Handling
 
@@ -748,6 +804,7 @@ A finding shall be rejected when:
 * The quotation overlaps protected content.
 * The category is unsupported.
 * `type` and `category` are inconsistently paired.
+* The suggestion is identical to the quoted or source text.
 * The finding belongs to a stale review.
 
 Where an exact match fails, one whitespace-collapsing
@@ -797,7 +854,7 @@ skinparam shadowing false
 actor Author
 participant Neovim
 participant "Lua Controller" as Lua
-participant "Ollama Adapter" as Adapter
+participant "Inference Adapter" as Adapter
 participant "Selected Local Model" as Model
 participant "Correction Applier" as Applier
 
@@ -853,7 +910,7 @@ Stale results shall be discarded.
 
 === Context Limits
 
-The configured Ollama model has a finite context window.
+The selected model has a finite context window.
 
 The plugin shall reserve capacity for:
 
@@ -978,7 +1035,8 @@ and leave the buffer unchanged.
 The health command distinguishes:
 
 * Ollama service unavailable.
-* Configured model not installed.
+* Configured Ollama model not installed.
+* Native `fm` command unavailable or not executable.
 
 Review execution separately reports transport failure,
 invalid responses and request timeout as failed chunks.
@@ -1020,20 +1078,26 @@ requests from publishing results.
 
 === Local Execution
 
-The initial implementation shall use a local Ollama
-service bound to loopback.
+Each backend shall execute locally.
+
+Ollama mode shall connect only to the configured loopback
+endpoint.
+
+Native mode shall invoke only the configured local `fm`
+command.
 
 Remote inference and automatic cloud fallback are
-outside the initial scope.
+outside scope.
 
 === Transport
 
-The adapter shall:
+The adapters shall:
 
-* Use the configured loopback endpoint.
+* Use only the configured local transport.
 * Avoid shell interpolation.
-* Send document content in the request body.
-* Validate transport and HTTP status.
+* Send document content through standard input or the
+  request body.
+* Validate process status, transport status and responses.
 * Never execute generated text.
 * Avoid persisting document contents.
 
@@ -1060,31 +1124,34 @@ be persisted without explicit user opt-in.
 
 Test:
 
-* Configuration validation.
+* Configuration validation, including backend selection.
 * Filetype eligibility.
 * Document segmentation.
 * Protected-region handling.
 * Source mappings.
 * UTF-8 coordinate conversion.
 * JSON validation.
+* No-op suggestion rejection.
 * Duplicate findings.
 * Quickfix construction.
 * Individual correction application.
 * Atomic bulk application and overlap rejection.
 * Extmark movement after preceding edits.
+* Characterwise and linewise selection review.
 * Cancellation and stale-result detection.
 
 === Integration Tests
 
 Test:
 
-* Ollama service discovery.
-* Configured model availability.
-* Structured JSON output.
+* Ollama service discovery and model availability.
+* Native `fm` command discovery.
+* Structured JSON output from each backend.
 * Asynchronous request execution.
 * Complete review lifecycle.
 * Quickfix navigation.
 * Individual and bulk correction application.
+* Recommendation ignoring and queue removal.
 * Single-step undo after bulk application.
 * Timeout and cancellation behaviour.
 
@@ -1161,13 +1228,14 @@ No custom binary compilation shall be required.
 The README shall document:
 
 * Neovim requirements.
-* Ollama installation and availability.
-* Supported model configuration.
+* Native `fm` and Ollama installation or availability.
+* Supported backend and model configuration.
 * Plugin installation.
-* Filetype configuration.
-* Review commands.
+* Filetype and check configuration.
+* Complete-buffer and visual-selection review commands.
 * Quickfix navigation.
 * Individual and bulk correction application.
+* Recommendation ignoring.
 * Undo behaviour after correction application.
 * Troubleshooting.
 
@@ -1176,14 +1244,19 @@ The README shall document:
 === Completed: Runnable Plugin
 
 * Setup, configuration and user commands.
+* Backend selection between native `fm` and Ollama.
 * Filetype allowlist and buffer snapshots.
-* Asynchronous sequential Ollama requests.
+* Asynchronous sequential requests to the selected backend.
 * Packaged structured-response schema.
 * Deterministic source validation and quickfix output.
 * Individual and atomic bulk correction application.
+* Recommendation ignoring and quickfix queue removal.
+* Characterwise and linewise visual-selection review.
+* Optional asynchronous Ollama model preload.
 * Cancellation, stale-result protection and partial failure.
 * Plain text, Markdown and AsciiDoc handling.
-* Automated headless tests and real-Ollama verification.
+* Automated headless tests and real `fm` and Ollama
+  verification.
 * Installation, configuration and Vim help documentation.
 
 === Before First Tagged Release

@@ -2,7 +2,8 @@
 = AI Proofread for Neovim
 
 AI Proofread is a Neovim plugin for on-demand British
-English proofreading with a local Ollama model.
+English proofreading with a selected local backend: Apple's
+native `fm` command or a local Ollama model.
 
 It reviews prose without sending document contents to a cloud
 service and publishes verified findings to Neovim's quickfix
@@ -16,12 +17,13 @@ The current implementation supports plain text, Markdown and
 AsciiDoc buffers. Typst and RTF require dedicated parsers and
 are not yet supported.
 
-The complete Neovim-to-Ollama-to-quickfix path has been
-verified with the default model. The automated headless suite
-also verifies loading, configuration, source mapping, markup
+The complete Neovim-to-backend-to-quickfix path has been
+verified with both native `fm` and the default Ollama model.
+The automated headless suite also verifies loading,
+configuration, backend selection, source mapping, markup
 masking, validation, cancellation, stale-result handling,
-partial failure, hard-limit reporting and correction
-application.
+partial failure, hard-limit reporting, visual selection and
+correction application.
 
 == Checks
 
@@ -39,7 +41,8 @@ deliberately outside scope.
   service with an installed structured-output model.
 * `curl` in `PATH` when using Ollama.
 
-The provisional default model is `gemma4:12b-it-qat`.
+The provisional default Ollama model is
+`gemma4:12b-it-qat`.
 The plugin never downloads models.
 
 == Installation
@@ -104,6 +107,11 @@ require("ai-proofread").setup({
     markdown = true,
     text = true,
   },
+  checks = {
+    spelling = true,
+    grammar = true,
+    punctuation = true,
+  },
   review = {
     chunk_size = 2500,
     hard_limit = 12000,
@@ -120,6 +128,11 @@ require("ai-proofread").setup({
   },
 })
 ----
+
+All three checks are enabled by default.
+Set a check to `false` to exclude that category from the
+prompt and from validation.
+The filetype table is an allowlist.
 
 == Inference Backends
 
@@ -160,7 +173,7 @@ selection.
 Cancel the active review for the current buffer.
 
 `AIProofreadHealth`::
-Check whether the configured Ollama model is available.
+Check whether the selected backend and model are available.
 
 `AIProofreadApply`::
 Apply the correction at the current quickfix entry.
@@ -294,9 +307,10 @@ until release hardening is complete.
 
 == Privacy
 
-Reviewed buffer contents are sent only to the configured Ollama
-endpoint. The default endpoint is local loopback. No cloud
-fallback is implemented.
+Reviewed buffer contents are sent only to the native `fm`
+process or the configured Ollama endpoint. The default
+Ollama endpoint is local loopback. No cloud fallback is
+implemented.
 
 == Licence
 
