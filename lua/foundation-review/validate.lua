@@ -16,10 +16,6 @@ local categories = {
   spelling = "correction",
   grammar = "correction",
   punctuation = "correction",
-  sentence_readability = "rewrite",
-  structure = "rewrite",
-  word_choice = "correction",
-  consistency = "correction",
 }
 
 local required_fields = {
@@ -66,7 +62,7 @@ function M.validate_schema(finding)
     end
   end
 
-  if finding.type ~= "correction" and finding.type ~= "rewrite" then
+  if finding.type ~= "correction" then
     return false
   end
 
@@ -126,7 +122,8 @@ function M.validate_finding(finding, chunk)
     end_column = end_column,
     source_start_byte = source_start,
     source_end_byte = source_end,
-    severity = finding.type == "rewrite" and "info" or "warning",
+    source_text = chunk.document_text:sub(source_start, source_end),
+    severity = "warning",
     type = finding.type,
     category = finding.category,
     original = finding.original,

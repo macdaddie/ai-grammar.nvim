@@ -13,12 +13,22 @@ function M.setup(options)
 
   current_config = config_module.merge(options)
 
-  local mapping = current_config.keymaps.review
-  if mapping and mapping ~= "" then
-    vim.keymap.set("n", mapping, M.review, {
-      desc = "Review buffer prose",
-      silent = true,
-    })
+  local mappings = {
+    review = { callback = M.review, desc = "Review buffer prose" },
+    apply = { callback = M.apply, desc = "Apply review correction" },
+    apply_all = {
+      callback = M.apply_all,
+      desc = "Apply all review corrections",
+    },
+  }
+  for name, definition in pairs(mappings) do
+    local mapping = current_config.keymaps[name]
+    if type(mapping) == "string" and mapping ~= "" then
+      vim.keymap.set("n", mapping, definition.callback, {
+        desc = definition.desc,
+        silent = true,
+      })
+    end
   end
 
   return current_config
@@ -43,6 +53,14 @@ end
 
 function M.health()
   return require("foundation-review.health").check(current_config)
+end
+
+function M.apply()
+  return require("foundation-review.apply").current()
+end
+
+function M.apply_all()
+  return require("foundation-review.apply").all()
 end
 
 return M

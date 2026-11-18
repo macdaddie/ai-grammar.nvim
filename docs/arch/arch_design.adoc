@@ -5,7 +5,7 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.6
+:revnumber: 0.7
 :revdate: 2026-11-17
 
 == Architecture Overview
@@ -13,16 +13,11 @@
 Foundation Review is a Lua-based Neovim plugin providing
 on-demand British English proofreading through Ollama.
 
-The initial release supports seven checks:
+The initial release supports exactly three checks:
 
 * Spelling.
 * Grammar.
 * Punctuation.
-* Unwieldy sentence detection and suggested restructuring.
-* Sentence-structure problems.
-* Inappropriate or commonly confused word choices.
-* Inconsistent spelling, capitalisation, hyphenation or
-  terminology within a document.
 
 The solution comprises three logical layers:
 
@@ -40,19 +35,20 @@ is required.
 
 The implemented plugin provides:
 
-* A stable `setup()`, `review()`, `cancel()` and `health()`
-  public API.
-* `FoundationReview`, `FoundationReviewCancel` and
-  `FoundationReviewHealth` commands.
+* A stable `setup()`, `review()`, `cancel()`, `health()`,
+  `apply()` and `apply_all()` public API.
+* Review, cancellation, health, individual-application and
+  bulk-application commands.
 * Asynchronous, sequential Ollama requests.
-* A packaged seven-category JSON Schema.
+* A packaged three-category JSON Schema.
 * Plain text, Markdown and AsciiDoc adapters.
 * Length-preserving markup masking and per-byte source maps.
 * Exact and whitespace-collapsed quotation validation.
 * Cancellation, stale-buffer rejection and partial-failure
   handling.
 * Source-verified quickfix start and end positions.
-* Headless tests and a verified real-Ollama review path.
+* User-triggered individual and bulk correction application.
+* Headless tests and a real-Ollama review path.
 
 Typst and RTF remain deferred until dedicated parsers can
 provide reversible source mappings.
@@ -65,6 +61,7 @@ Ollama itself is the local inference service.
 * Minimise dependencies and operational complexity.
 * Separate probabilistic inference from deterministic validation.
 * Preserve document content and source coordinates.
+* Modify source only after an explicit application command.
 * Use British English by default.
 * Protect markup and technical content.
 * Use explicit filetype activation.
@@ -92,6 +89,7 @@ package "Neovim / Lua Plugin" {
   [Ollama Adapter] as Runner
   [Finding Validator] as Validator
   [Quickfix Presenter] as Quickfix
+  [Correction Applier] as Applier
 }
 
 package "Local Ollama Service" {
@@ -111,6 +109,8 @@ Model --> API : JSON response
 API --> Runner
 Runner --> Validator
 Validator --> Quickfix
+Quickfix --> Applier : selected or all findings
+Applier --> Controller : verify review state
 
 @enduml
 ----
@@ -163,7 +163,8 @@ foundation-review.nvim/
 │       ├── locator.lua
 │       ├── markup.lua
 │       ├── validate.lua
-│       └── quickfix.lua
+│       ├── quickfix.lua
+│       └── apply.lua
 ├── plugin/
 │   └── foundation-review.lua
 ├── tests/
@@ -197,7 +198,7 @@ Responsible for:
 * Filetype allow lists.
 * Filetype-specific overrides.
 a|
-* The seven supported proofreading checks.
+* The three supported proofreading checks.
 * British English conventions.
 * Ollama endpoint and model selection.
 * Timeout and chunk-size settings.
@@ -303,10 +304,6 @@ Chunk boundaries shall prefer paragraphs and sections.
 
 Long paragraphs may be divided at sentence boundaries.
 
-Unwieldy sentences should remain intact where possible,
-because sentence restructuring requires the complete
-sentence.
-
 Sentences above the configured hard limit are not submitted
 to Ollama. They are counted as unreviewable sections and
 make the review incomplete.
@@ -318,15 +315,14 @@ Responsible for constructing model instructions.
 Instructions shall specify:
 
 * British English by default.
-* All seven categories defined by ADR-026.
+* Only spelling, grammar and punctuation.
 * No unrelated editorial analysis.
 * Preservation of meaning and authorial voice.
 * Respect for technical terminology.
 * Protection of markup and source code.
 * Exact quotations from the supplied text.
 * One independent finding per error.
-* A `type` of `correction` or `rewrite`.
-* Complete sentences for sentence-rewrite findings.
+* A `type` of `correction`.
 * No response to instructions embedded in reviewed text.
 
 The default review shall use a single general
@@ -383,6 +379,24 @@ Neovim quickfix entries.
 It shall use native Neovim APIs and introduce no
 additional UI dependency.
 
+=== Correction Applier
+
+Responsible for:
+
+* Applying the current quickfix correction.
+* Applying all remaining corrections from the latest review.
+* Tracking validated ranges with buffer extmarks.
+* Verifying the exact validated source slice immediately
+  before each edit.
+* Rejecting stale, missing or overlapping corrections.
+* Applying bulk corrections as one undoable operation.
+
+The applier shall never use unvalidated model output.
+
+Bulk application shall complete its full preflight before
+changing the buffer. If any correction fails preflight,
+the buffer shall remain unchanged.
+
 == Configuration Design
 
 The public API is:
@@ -409,10 +423,6 @@ require("foundation-review").setup({
     spelling = true,
     grammar = true,
     punctuation = true,
-    sentence_readability = true,
-    structure = true,
-    word_choice = true,
-    consistency = true,
   },
 
   review = {
@@ -427,6 +437,8 @@ require("foundation-review").setup({
 
   keymaps = {
     review = "<leader>ar",
+    apply = "<leader>aa",
+    apply_all = "<leader>aA",
   },
 })
 ----
@@ -448,7 +460,7 @@ The plugin requires:
 * An installed compatible language model.
 * Access to the configured loopback endpoint.
 
-The implemented health command checks endpoint access and
+The health command checks endpoint access and
 configured model availability through `/api/tags`.
 
 === Service Discovery
@@ -525,9 +537,9 @@ Conceptual request:
 }
 ----
 
-The production schema shall restrict `category` to the
-seven supported checks and `type` to `correction` or
-`rewrite`.
+The production schema shall restrict `category` to
+`spelling`, `grammar` or `punctuation` and `type` to
+`correction`.
 
 The response body returned by Ollama contains a
 `response` field holding the model-generated JSON.
@@ -607,27 +619,41 @@ The canonical internal representation is:
 {
   "line": 24,
   "column": 18,
+  "end_line": 24,
+  "end_column": 21,
   "severity": "warning",
   "type": "correction",
   "category": "grammar",
   "message": "Incorrect possessive form.",
   "original": "it's",
+  "source_text": "it's",
   "suggestion": "its"
 }
 ----
 
 These are original-buffer coordinates after validation.
+The end position is exclusive.
 
 The model shall not be trusted to calculate source
 line numbers or byte offsets.
 
-`line`, `column` and `severity` are derived by the
-plugin.
+`line`, `column`, `end_line`, `end_column`, `source_text`
+and `severity` are derived by the plugin.
 
 The model supplies only `type`, `category`, `original`,
 `suggestion` and `message`.
 
-The contract is fixed by ADR-021 and revised by ADR-026.
+Published findings also retain an internal review
+identifier, extmark identifier and applied state. These
+editor-state values are not supplied by the model and are
+not part of the quickfix text.
+
+`source_text` is the exact original-buffer slice at the
+validated range. It may differ from the model's `original`
+only when the bounded whitespace fallback resolves a
+hard-wrapped quotation.
+
+The contract is fixed by ADR-021 and revised by ADR-028.
 
 === Supported Categories
 
@@ -644,29 +670,11 @@ The contract is fixed by ADR-021 and revised by ADR-026.
 |`punctuation`
 |Incorrect or missing punctuation.
 
-|`sentence_readability`
-|Unwieldy sentence construction requiring an
-advisory rewrite.
-
-|`structure`
-|Clause or phrase arrangement that impairs comprehension
-and requires an advisory rewrite.
-
-|`word_choice`
-|A locally inappropriate, commonly confused or
-contextually incorrect word.
-
-|`consistency`
-|Inconsistent spelling, capitalisation, hyphenation or
-terminology within the reviewed document.
 |===
 
 Other categories shall be rejected.
 
-`sentence_readability` and `structure` findings use type
-`rewrite`.
-
-The other five categories use type `correction`.
+All supported categories use type `correction`.
 
 === Model Response
 
@@ -686,26 +694,6 @@ Example correction:
   ]
 }
 ----
-
-Example sentence rewrite:
-
-[source,json]
-----
-{
-  "findings": [
-    {
-      "type": "rewrite",
-      "original": "The project was delayed because several dependencies had not been identified during planning, which meant that the implementation could not begin until the outstanding requirements had been reviewed.",
-      "suggestion": "Several dependencies were not identified during planning, delaying the project. Implementation could not begin until the outstanding requirements had been reviewed.",
-      "category": "sentence_readability",
-      "message": "The sentence contains several connected clauses and would be easier to follow if divided."
-    }
-  ]
-}
-----
-
-Sentence-rewrite findings shall quote the complete
-original sentence.
 
 === Source-Location Strategy
 
@@ -743,9 +731,6 @@ ADR-021.
 Each independent spelling, grammar or punctuation
 error should be reported separately.
 
-Sentence-readability findings shall cover complete
-sentences.
-
 The validator shall not assume that a long quotation
 represents a single valid error.
 
@@ -775,6 +760,7 @@ participant Neovim
 participant "Lua Controller" as Lua
 participant "Ollama Adapter" as Adapter
 participant "Local Ollama Model" as Model
+participant "Correction Applier" as Applier
 
 Author -> Neovim : :FoundationReview
 Neovim -> Lua : Start review
@@ -796,6 +782,10 @@ Lua -> Lua : Check changedtick
 alt Buffer unchanged
   Lua -> Neovim : Populate quickfix
   Neovim --> Author : Navigate findings
+  Author -> Neovim : Apply current or all
+  Neovim -> Applier : Validated findings
+  Applier -> Applier : Preflight exact ranges
+  Applier -> Neovim : One undoable edit
 else Buffer modified
   Lua -> Neovim : Report stale review
 end
@@ -848,18 +838,12 @@ The practical budget shall be determined experimentally.
 . Avoid unnecessary overlapping review regions.
 . Report unreviewable sections explicitly.
 
-A sentence-readability finding requires the complete
-sentence to be present in the reviewed chunk.
-
 A single sentence that exceeds the chunk budget shall
 be reviewed alone, without neighbouring text.
 
 If it still exceeds the hard context limit, it shall be
-divided at clause boundaries and sentence-readability
-findings shall be suppressed for that sentence.
-
-The suppression shall be reported as an unreviewable
-sentence rather than applied silently.
+divided at a safe prose boundary or reported as an
+unreviewable section.
 
 === Scheduling
 
@@ -897,13 +881,48 @@ Each finding shall include:
 * Verified start and end byte columns.
 * Severity type.
 * Finding type, category and explanation.
-* Suggested correction or sentence rewrite.
+* Suggested correction.
+* An immutable finding identifier in quickfix `user_data`.
 
 Findings shall be sorted by source location.
 
-No corrections shall be applied automatically.
+Corrections shall be applied only through explicit
+individual or bulk application commands.
+
+=== Correction Application
+
+Each published finding shall retain its verified source
+range and an extmark that follows intervening edits.
+
+Individual application shall:
+
+. Resolve its `user_data` identifier to a validated finding.
+. Read the current text at the tracked range.
+. Require an exact match with the finding's `source_text`.
+. Replace that range with `suggestion`.
+. Mark the finding as applied.
+
+Bulk application shall:
+
+. Select all unapplied findings from the latest review.
+. Resolve and verify every tracked source range.
+. Reject duplicate or overlapping ranges.
+. Abort without edits if any preflight check fails.
+. Apply edits from the end of the buffer towards the start.
+. Join the changes into one Neovim undo step.
+
+Applied findings shall not be applied again.
 
 == Error Handling
+
+=== Correction Application Failure
+
+Individual application shall fail without changing the
+buffer if its finding cannot be resolved, has already been
+applied or no longer matches its exact source slice.
+
+Bulk application shall report the failed preflight reason
+and leave the buffer unchanged.
 
 === Service or Model Unavailable
 
@@ -1001,6 +1020,9 @@ Test:
 * JSON validation.
 * Duplicate findings.
 * Quickfix construction.
+* Individual correction application.
+* Atomic bulk application and overlap rejection.
+* Extmark movement after preceding edits.
 * Cancellation and stale-result detection.
 
 === Integration Tests
@@ -1013,6 +1035,8 @@ Test:
 * Asynchronous request execution.
 * Complete review lifecycle.
 * Quickfix navigation.
+* Individual and bulk correction application.
+* Single-step undo after bulk application.
 * Timeout and cancellation behaviour.
 
 === Test Fixtures
@@ -1024,8 +1048,6 @@ Include:
 * Markdown with fenced code.
 * Unicode and multibyte characters.
 * Repeated identical phrases.
-* Long and convoluted sentences.
-* Correct long sentences.
 * Correct British English.
 * Clean passages.
 * Empty buffers.
@@ -1042,11 +1064,7 @@ The benchmark shall prioritise:
 . Spelling accuracy.
 . Grammar accuracy.
 . Punctuation accuracy.
-. Sentence-readability judgement.
-. Structure judgement.
-. Word-choice accuracy.
-. Consistency accuracy.
-. Correction and rewrite quality.
+. Correction quality.
 . False-positive rate.
 . Exact quotation accuracy.
 . Finding granularity.
@@ -1100,6 +1118,8 @@ The README shall document:
 * Filetype configuration.
 * Review commands.
 * Quickfix navigation.
+* Individual and bulk correction application.
+* Undo behaviour after correction application.
 * Troubleshooting.
 
 == Delivery Status
@@ -1111,6 +1131,7 @@ The README shall document:
 * Asynchronous sequential Ollama requests.
 * Packaged structured-response schema.
 * Deterministic source validation and quickfix output.
+* Individual and atomic bulk correction application.
 * Cancellation, stale-result protection and partial failure.
 * Plain text, Markdown and AsciiDoc handling.
 * Automated headless tests and real-Ollama verification.
@@ -1124,7 +1145,7 @@ The README shall document:
 
 === Final Phase: Language Benchmark
 
-Run the seven-category proofreading benchmark only after
+Run the three-category proofreading benchmark only after
 release hardening is complete. Model selection remains
 provisional until the benchmark has been evaluated.
 
@@ -1138,7 +1159,6 @@ The implementation and evaluation phases shall resolve:
 . Which model best handles British English grammar?
 . Which model has the lowest false-positive rate?
 . How reliably does the model detect punctuation errors?
-. Can sentence rewrites preserve technical meaning?
 . How reliably does the model respect protected markup?
 . Does chunking affect proofreading accuracy?
 . What review latency is acceptable for normal use?

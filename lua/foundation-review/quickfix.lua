@@ -7,13 +7,16 @@ local function entry(buffer, finding)
     col = finding.column,
     end_lnum = finding.end_line,
     end_col = finding.end_column,
-    type = finding.severity == "warning" and "W" or "I",
+    type = "W",
     text = string.format(
       "[%s] %s Suggestion: %s",
       finding.category,
       finding.message,
       finding.suggestion
     ),
+    user_data = {
+      foundation_review_id = finding.application_id,
+    },
   }
 end
 

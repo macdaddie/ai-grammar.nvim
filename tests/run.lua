@@ -26,6 +26,8 @@ test("public API loads and merges setup options", function()
   equal(type(review.setup), "function")
   equal(type(review.review), "function")
   equal(type(review.cancel), "function")
+  equal(type(review.apply), "function")
+  equal(type(review.apply_all), "function")
 
   review.setup({
     ollama = { model = "test-model" },
@@ -43,6 +45,17 @@ test("plugin registers public commands", function()
   equal(vim.fn.exists(":FoundationReview"), 2)
   equal(vim.fn.exists(":FoundationReviewCancel"), 2)
   equal(vim.fn.exists(":FoundationReviewHealth"), 2)
+  equal(vim.fn.exists(":FoundationReviewApply"), 2)
+  equal(vim.fn.exists(":FoundationReviewApplyAll"), 2)
+end)
+
+test("configuration rejects removed proofreading checks", function()
+  local config = require("foundation-review.config")
+  local valid, err = config.validate({
+    checks = { sentence_readability = true },
+  })
+  equal(valid, nil)
+  equal(err, "unsupported check: sentence_readability")
 end)
 
 test("validator maps a UTF-8 finding to a line-local byte column", function()
@@ -97,7 +110,7 @@ test("validator rejects an ambiguous exact quotation", function()
   equal(reason, "not_unique")
 end)
 
-test("validator permits one whitespace-collapsed match", function()
+test("validator retains source text for a whitespace-collapsed match", function()
   local validator = require("foundation-review.validate")
   local text = "This sentence is hard\nwrapped here."
   local map = {}
@@ -106,11 +119,11 @@ test("validator permits one whitespace-collapsed match", function()
   end
 
   local finding, reason = validator.validate_finding({
-    type = "rewrite",
-    category = "structure",
-    original = "This sentence is hard wrapped here.",
-    suggestion = "This sentence is wrapped here.",
-    message = "The sentence structure is difficult to follow.",
+    type = "correction",
+    category = "grammar",
+    original = "is hard wrapped",
+    suggestion = "is hard-wrapped",
+    message = "Use a compound modifier.",
   }, {
     review_text = text,
     document_text = text,
@@ -118,8 +131,7 @@ test("validator permits one whitespace-collapsed match", function()
   })
 
   equal(reason, nil)
-  equal(finding.source_start_byte, 1)
-  equal(finding.source_end_byte, #text)
+  equal(finding.source_text, "is hard\nwrapped")
 end)
 
 test("validator rejects a finding that intersects protected content", function()
@@ -132,7 +144,7 @@ test("validator rejects a finding that intersects protected content", function()
 
   local finding, reason = validator.validate_finding({
     type = "correction",
-    category = "word_choice",
+    category = "spelling",
     original = "teh_code",
     suggestion = "the_code",
     message = "Use the intended identifier.",
@@ -220,15 +232,15 @@ test("Ollama request enforces deterministic structured output", function()
   equal(request.options.temperature, 0)
   equal(request.format.type, "object")
   equal(
+    request.format.properties.findings.items.properties.type.enum,
+    { "correction" }
+  )
+  equal(
     request.format.properties.findings.items.properties.category.enum,
     {
       "spelling",
       "grammar",
       "punctuation",
-      "sentence_readability",
-      "structure",
-      "word_choice",
-      "consistency",
     }
   )
 end)
@@ -307,6 +319,7 @@ test("public review publishes validated findings to quickfix", function()
   equal(quickfix.items[1].col, 10)
   equal(quickfix.items[1].end_lnum, 1)
   equal(quickfix.items[1].end_col, 12)
+  assert(quickfix.items[1].user_data.foundation_review_id)
   assert(quickfix.items[1].text:find("the", 1, true))
   equal(requested.think, false)
 end)
@@ -441,7 +454,231 @@ test("prompt requires minimal spans for corrections", function()
   assert(content:find("never quote the complete sentence", 1, true))
   assert(content:find('"teh"', 1, true))
   assert(content:find('"the"', 1, true))
-  assert(content:find("local corrections alone resolve", 1, true))
+  assert(content:find("readability, style, structure", 1, true))
+end)
+
+test("validator rejects removed proofreading categories", function()
+  local validator = require("foundation-review.validate")
+  local finding, reason = validator.validate_finding({
+    type = "correction",
+    category = "word_choice",
+    original = "affect",
+    suggestion = "effect",
+    message = "Use the intended noun.",
+  }, {
+    review_text = "affect",
+    document_text = "affect",
+    offset_map = { 1, 2, 3, 4, 5, 6 },
+  })
+
+  equal(finding, nil)
+  equal(reason, "unsupported_category")
+end)
+
+test("applies the current quickfix correction", function()
+  local review = require("foundation-review")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "This has teh mistake.",
+  })
+
+  review.setup({
+    keymaps = { review = false, apply = false, apply_all = false },
+    quickfix = { auto_open = false },
+    _transport = function(_, _, callback)
+      callback(nil, {
+        findings = {
+          {
+            type = "correction",
+            category = "spelling",
+            original = "teh",
+            suggestion = "the",
+            message = "Incorrect spelling.",
+          },
+        },
+      })
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  equal(review.apply(), true)
+  equal(
+    vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
+    { "This has the mistake." }
+  )
+end)
+
+test("bulk application is one undoable change", function()
+  local review = require("foundation-review")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "Teh cats is ready.",
+  })
+  local undo_levels = vim.bo[buffer].undolevels
+  vim.bo[buffer].undolevels = -1
+  vim.bo[buffer].undolevels = undo_levels
+
+  review.setup({
+    keymaps = { review = false, apply = false, apply_all = false },
+    quickfix = { auto_open = false },
+    _transport = function(_, _, callback)
+      callback(nil, {
+        findings = {
+          {
+            type = "correction",
+            category = "spelling",
+            original = "Teh",
+            suggestion = "The",
+            message = "Incorrect spelling.",
+          },
+          {
+            type = "correction",
+            category = "grammar",
+            original = "cats is",
+            suggestion = "cats are",
+            message = "Use plural agreement.",
+          },
+        },
+      })
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  equal(review.apply_all(), true)
+  equal(
+    vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
+    { "The cats are ready." }
+  )
+  vim.cmd("undo")
+  equal(
+    vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
+    { "Teh cats is ready." }
+  )
+end)
+
+test("remaining corrections follow an individually applied edit", function()
+  local review = require("foundation-review")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "Teeh cats is ready.",
+  })
+
+  review.setup({
+    keymaps = { review = false, apply = false, apply_all = false },
+    quickfix = { auto_open = false },
+    _transport = function(_, _, callback)
+      callback(nil, {
+        findings = {
+          {
+            type = "correction",
+            category = "spelling",
+            original = "Teeh",
+            suggestion = "The",
+            message = "Incorrect spelling.",
+          },
+          {
+            type = "correction",
+            category = "grammar",
+            original = "cats is",
+            suggestion = "cats are",
+            message = "Use plural agreement.",
+          },
+        },
+      })
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  equal(review.apply(), true)
+  equal(review.apply_all(), true)
+  equal(
+    vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
+    { "The cats are ready." }
+  )
+end)
+
+test("bulk application aborts when any source text changed", function()
+  local review = require("foundation-review")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "Teh cats is ready.",
+  })
+
+  review.setup({
+    keymaps = { review = false, apply = false, apply_all = false },
+    quickfix = { auto_open = false },
+    _transport = function(_, _, callback)
+      callback(nil, {
+        findings = {
+          {
+            type = "correction",
+            category = "spelling",
+            original = "Teh",
+            suggestion = "The",
+            message = "Incorrect spelling.",
+          },
+          {
+            type = "correction",
+            category = "grammar",
+            original = "cats is",
+            suggestion = "cats are",
+            message = "Use plural agreement.",
+          },
+        },
+      })
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  vim.api.nvim_buf_set_text(buffer, 0, 4, 0, 8, { "dogs" })
+  local applied = review.apply_all()
+  equal(applied, nil)
+  equal(
+    vim.api.nvim_buf_get_lines(buffer, 0, -1, false),
+    { "Teh dogs is ready." }
+  )
+end)
+
+test("bulk application rejects overlapping corrections", function()
+  local apply = require("foundation-review.apply")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, { "abcdef" })
+
+  apply.register(buffer, 999, {
+    {
+      line = 1,
+      column = 1,
+      end_line = 1,
+      end_column = 3,
+      source_text = "abc",
+      suggestion = "x",
+    },
+    {
+      line = 1,
+      column = 2,
+      end_line = 1,
+      end_column = 4,
+      source_text = "bcd",
+      suggestion = "y",
+    },
+  })
+
+  local applied = apply.all()
+  equal(applied, nil)
+  equal(vim.api.nvim_buf_get_lines(buffer, 0, -1, false), { "abcdef" })
 end)
 
 test("sentences beyond the hard limit are reported without inference", function()

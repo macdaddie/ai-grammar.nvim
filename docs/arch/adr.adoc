@@ -5,7 +5,7 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.5
+:revnumber: 0.6
 :revdate: 2026-11-17
 
 == Purpose
@@ -57,7 +57,7 @@ Superseded decisions shall not be deleted.
 
 |007
 |Maintain non-destructive operation
-|Accepted
+|Superseded by ADR-029
 
 |008
 |Use deterministic source-location validation
@@ -109,11 +109,11 @@ Superseded decisions shall not be deleted.
 
 |020
 |Distinguish corrections from sentence rewrites
-|Accepted
+|Superseded by ADR-028
 
 |021
 |Fix a machine-checkable response contract
-|Accepted, revised by ADR-026
+|Accepted, revised by ADR-026 and ADR-028
 
 |022
 |Phase 1: Core validation utilities (UTF-8 byte offsets, exact locator, chunk wrapper, finding validator)
@@ -129,14 +129,22 @@ Superseded decisions shall not be deleted.
 
 |025
 |Phase 4: Configuration, commands, health check
-|Accepted
+|Accepted, revised by ADR-029
 
 |026
 |Expand proofreading scope to seven categories
-|Accepted
+|Superseded by ADR-028
 
 |027
 |Adopt the tested asynchronous plugin structure
+|Accepted
+
+|028
+|Restrict proofreading to three correction categories
+|Accepted
+
+|029
+|Apply validated corrections on explicit request
 |Accepted
 |===
 
@@ -208,6 +216,7 @@ Continue with Phase 4 (health checks, configuration, commands) and Phase 5 (benc
 
 Status:: Accepted
 Date:: 2026-11-17
+Revised by:: ADR-029
 
 ==== Context
 
@@ -477,8 +486,9 @@ Users must explicitly enable additional filetypes.
 
 === ADR-007: Non-Destructive Review
 
-Status:: Accepted
+Status:: Superseded
 Date:: 2026-11-16
+Superseded by:: ADR-029
 
 ==== Context
 
@@ -1107,9 +1117,10 @@ Findings overlapping protected regions shall be rejected.
 
 === ADR-020: Separate Corrections and Sentence Rewrites
 
-Status:: Accepted
+Status:: Superseded
 Date:: 2026-11-16
 Reinforces:: ADR-007
+Superseded by:: ADR-028
 
 ==== Context
 
@@ -1162,6 +1173,7 @@ applied automatically.
 Status:: Accepted
 Date:: 2026-11-16
 Refines:: ADR-016, ADR-020
+Revised by:: ADR-026, ADR-028
 
 ==== Context
 
@@ -1393,10 +1405,11 @@ scan per chunk.
 
 === ADR-026: Expanded Proofreading Scope
 
-Status:: Accepted
+Status:: Superseded
 Date:: 2026-11-17
 Supersedes:: ADR-017
 Revises:: ADR-021
+Superseded by:: ADR-028
 
 ==== Context
 
@@ -1476,6 +1489,197 @@ redundancy analysis, logical consistency checking,
 terminology-policy enforcement and fact-checking remain
 outside scope.
 
+=== ADR-028: Three-Category Correction Scope
+
+Status:: Accepted
+Date:: 2026-11-17
+Supersedes:: ADR-020, ADR-026
+Revises:: ADR-021
+
+==== Context
+
+ADR-026 expanded the plugin from four proofreading
+categories to seven.
+
+That expansion moved the product beyond its useful core.
+Sentence readability, structure, word choice and
+consistency invite subjective editorial changes rather
+than bounded mechanical corrections.
+
+The intended workflow is limited to spelling, grammar and
+punctuation.
+
+ADR-020 and ADR-021 also provided for sentence rewrites,
+which are no longer required.
+
+==== Decision
+
+The plugin shall support exactly three categories:
+
+. `spelling`.
+. `grammar`.
+. `punctuation`.
+
+Every accepted finding shall have type `correction`.
+
+The packaged JSON Schema shall permit only those three
+categories and the `correction` type.
+
+Sentence readability, sentence restructuring, general
+structure analysis, word-choice review and consistency
+review are outside scope.
+
+The prompt, validator, quickfix presentation, fixtures and
+benchmark shall use the three-category contract.
+
+==== Alternatives Considered
+
+Keep four categories::
+Retaining sentence readability would preserve the original
+rewrite workflow, but would continue subjective editorial
+behaviour that is no longer wanted.
+
+Keep seven categories but disable four by default::
+This would retain unnecessary schema, prompt, validation and
+test complexity, and would make future scope drift easier.
+
+Use configurable arbitrary categories::
+This would weaken deterministic validation and make model
+behaviour harder to evaluate.
+
+==== Rationale
+
+* Matches the revised product intent exactly.
+* Removes subjective sentence rewriting.
+* Simplifies prompts, schema validation and evaluation.
+* Reduces unwanted findings and implementation complexity.
+* Keeps every finding suitable for a bounded replacement.
+
+==== Consequences
+
+ADR-026 remains as historical evidence of the abandoned
+scope expansion.
+
+The `rewrite` finding type and informational quickfix
+severity are removed from the current design.
+
+The schema retains the `type` field for an explicit,
+machine-checkable contract, but its only valid value is
+`correction`.
+
+Any future category requires a new accepted ADR.
+
+=== ADR-029: Explicit Correction Application
+
+Status:: Accepted
+Date:: 2026-11-17
+Supersedes:: ADR-007
+Revises:: ADR-025
+
+==== Context
+
+ADR-007 prohibited all source-buffer modification and
+required authors to reproduce corrections manually.
+
+Every accepted finding now represents a validated,
+localised replacement with exact original and suggested
+text.
+
+The author needs to apply either the current recommendation
+or all recommendations without retyping them.
+
+Model suggestions remain untrusted, and edits may occur
+between review and application.
+
+==== Decision
+
+Provide two explicit, user-triggered operations:
+
+Individual application::
+Apply the validated correction represented by the current
+quickfix entry.
+
+Bulk application::
+Apply all unapplied validated corrections from the latest
+published review.
+
+Expose these operations through `apply()` and `apply_all()`
+in the public Lua API and through
+`:FoundationReviewApply` and
+`:FoundationReviewApplyAll`.
+
+Review completion shall never apply a correction by itself.
+
+Each published correction shall retain its verified source
+range, exact source slice and a Neovim extmark that tracks
+the range through intervening edits.
+
+Immediately before an individual edit, the plugin shall
+verify that the tracked range still contains the exact
+source slice captured by deterministic validation.
+
+Bulk application shall:
+
+. Resolve all unapplied corrections from the latest review.
+. Verify every current range and exact source slice.
+. Reject duplicate or overlapping ranges.
+. Complete the full preflight before modifying the buffer.
+. Abort without changes if any preflight check fails.
+. Apply replacements from the end of the buffer backwards.
+. Join all replacements into one Neovim undo step.
+
+An applied correction shall not be applied again.
+
+==== Alternatives Considered
+
+Keep manual editing only::
+This preserves the strongest non-destructive rule but adds
+avoidable friction and transcription errors.
+
+Apply each finding as soon as it is produced::
+This removes authorial review, risks unwanted changes and
+mixes probabilistic inference with editor mutation.
+
+Apply all valid findings and skip stale ones::
+This can leave a partially corrected document while
+appearing to have completed one bulk action.
+
+Re-run source searches during application::
+This could select a different repeated occurrence and
+would weaken the exact verified-range guarantee.
+
+==== Rationale
+
+* Keeps every edit under explicit author control.
+* Reuses deterministic validation already required for
+  quickfix navigation.
+* Prevents stale or ambiguous replacements.
+* Gives bulk application atomic user-visible semantics.
+* Preserves easy recovery through a single undo step.
+* Allows individual edits without retyping model output.
+
+==== Consequences
+
+The runtime design gains a correction-applier component and
+state linking quickfix entries to validated findings.
+
+Extmarks are an editor-tracking aid, not sufficient proof
+that a correction remains valid. Exact source-slice
+verification is still mandatory immediately before
+replacement.
+
+After any application, the original review is no longer a
+complete representation of the buffer. Unapplied findings
+may continue to be used only while their tracked ranges and
+exact source slices remain valid.
+
+Bulk preflight failure shall report the reason and leave the
+buffer unchanged.
+
+Tests shall cover individual application, atomic bulk
+application, overlap rejection, stale text, extmark movement,
+duplicate application prevention and single-step undo.
+
 == Decision Governance
 
 === Decision Lifecycle
@@ -1512,7 +1716,6 @@ The following matters remain subject to testing:
 * Final proofreading model selection.
 * Practical context and chunk size.
 * Sentence-boundary detection across AsciiDoc markup.
-* Quality thresholds for sentence rewrites.
 * Acceptable false-positive rates.
 * Review latency on representative documents.
 * Handling of partially failed reviews.
@@ -1527,7 +1730,6 @@ The project shall remain focused on:
 * British English spelling.
 * Grammar.
 * Punctuation.
-* Unwieldy sentence detection and restructuring.
 
 New editorial capabilities require a separate,
 explicitly accepted architectural decision.

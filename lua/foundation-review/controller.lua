@@ -1,4 +1,5 @@
 local adapters = require("foundation-review.adapters")
+local apply = require("foundation-review.apply")
 local ollama = require("foundation-review.ollama")
 local prompt = require("foundation-review.prompt")
 local quickfix = require("foundation-review.quickfix")
@@ -30,6 +31,7 @@ local function finish(review)
   end
 
   active[review.buffer] = nil
+  apply.register(review.buffer, review.id, review.result.valid_findings)
   quickfix.publish(review.buffer, review.result, review.config.quickfix)
 
   if not review.result.complete then

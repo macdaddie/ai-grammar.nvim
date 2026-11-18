@@ -5,7 +5,7 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.6
+:revnumber: 0.7
 :revdate: 2026-11-17
 
 == Executive Summary
@@ -19,7 +19,7 @@ Its primary responsibilities are:
 * Spelling.
 * Grammar.
 * Punctuation.
-* Detection and suggested rewriting of unwieldy sentences.
+* User-triggered application of validated corrections.
 
 The plugin uses a locally hosted language model through
 Ollama and presents findings through Neovim's native
@@ -28,7 +28,7 @@ quickfix list.
 The initial model is `gemma4:12b-it-qat`, subject to
 further proofreading-specific evaluation.
 
-All application-specific logic is implemented in Lua.
+All application-specific logic shall be implemented in Lua.
 No custom Swift application, cloud API, external account
 or additional application service is required.
 
@@ -39,11 +39,8 @@ their continuous diagnostics.
 == Problem Statement
 
 Traditional spelling and grammar tools provide useful
-mechanical checks, but some grammatical errors depend
-on context and are difficult to detect reliably.
-
-They may also struggle to recognise sentences that are
-grammatically valid but unnecessarily long or convoluted.
+mechanical checks, but some errors depend on context and
+are difficult to detect reliably.
 
 General-purpose AI assistants can help, but introduce
 unnecessary interaction and may suggest changes outside
@@ -56,11 +53,12 @@ with Neovim.
 == Vision
 
 Provide a local, unobtrusive proofreader that identifies
-language errors and difficult sentence construction
-without interfering with the author's writing process.
+spelling, grammar and punctuation errors without
+interfering with the author's writing process.
 
 The author invokes a review, examines the findings and
-decides whether to make corrections.
+decides whether to apply corrections individually or
+all at once.
 
 The reviewer advises; the author retains control.
 
@@ -81,13 +79,14 @@ a|
 . Use British English by default.
 a|[start=9]
 . Detect spelling, grammar and punctuation errors.
-. Identify structure, word-choice and consistency issues.
-. Identify unwieldy sentences and suggest restructuring.
-. Return structured findings.
+. Return structured findings with replacement text.
 . Present findings through native quickfix.
 . Preserve accurate source locations.
+. Apply a selected validated correction on request.
+. Apply all validated corrections on request.
 . Execute asynchronously.
-. Never modify document contents automatically.
+. Never modify document contents without an explicit
+  application command.
 . Require minimal installation and configuration.
 |===
 
@@ -103,11 +102,8 @@ a|
 * British English spelling checks.
 * Context-sensitive grammatical checks.
 * Punctuation checks.
-* Sentence-structure checks.
-* Context-sensitive word-choice checks.
-* Document usage consistency checks.
-* Detection of excessively long or convoluted sentences.
-* Suggested rewrites of flagged sentences.
+* User-triggered application of one validated correction.
+* User-triggered application of all validated corrections.
 * Filetype-specific protection of non-prose content.
 a|
 * Document segmentation for model context limits.
@@ -117,37 +113,24 @@ a|
 * Model and service availability checks.
 |===
 
-=== Sentence Readability
+=== Correction Application
 
-Sentence readability is a deliberately limited
-extension of proofreading.
+Correction application is always initiated by the author.
 
-A long sentence is not necessarily a defective sentence.
+The current quickfix finding may be applied individually,
+or all remaining validated findings from the latest review
+may be applied in one operation.
 
-The reviewer shall identify sentences whose construction
-makes them unnecessarily difficult to understand.
+Before changing the buffer, the plugin shall verify that
+each target range still contains the exact source slice
+captured during validation.
 
-[cols="1,1",frame=none, grid=none]
-|===
-a|
-Suggested corrections may:
+Bulk application shall reject overlapping corrections,
+preflight every target before making any change and create
+one undo step.
 
-* Divide a sentence into shorter sentences.
-* Simplify unnecessarily complicated syntax.
-* Remove structural complexity where meaning is preserved.
-* Improve punctuation supporting sentence structure.
-a|
-The reviewer shall not:
-
-* Flag sentences solely because they exceed a word count.
-* Remove factual details.
-* Change technical terminology unnecessarily.
-* Change the author's intended meaning.
-* Rewrite otherwise acceptable prose for stylistic reasons.
-|===
-
-A sentence rewrite shall be reported as an advisory
-suggestion, not a definite grammatical error.
+Failure of any bulk preflight check shall leave the buffer
+unchanged.
 
 === Out of Scope
 
@@ -158,15 +141,17 @@ The initial release shall not include:
 a|
 * General stylistic editing.
 * Document-wide rewriting.
-* General clarity or concision analysis outside
-  unwieldy sentence construction.
+* Sentence readability or restructuring.
+* General clarity or concision analysis.
 * Ambiguity analysis as an independent review category.
 * Redundancy and repetition analysis as independent checks.
 * Logical consistency checking.
+* Word-choice analysis beyond grammatical correctness.
+* Document usage or terminology consistency checking.
 * Project-wide terminology-policy enforcement.
 a|
 * Fact-checking.
-* Automatic application of corrections.
+* Edits triggered without an explicit author command.
 * Cloud inference.
 * A conversational interface.
 * Continuous inference while typing.
@@ -218,7 +203,7 @@ scope decision and are not implied by the use of an LLM.
 Model names are configuration values rather than
 hard-coded application dependencies.
 
-The implementation uses Ollama exclusively.
+The implementation shall use Ollama exclusively.
 
 Apple Foundation Models is not an initial backend,
 following comparative feasibility testing.
@@ -227,14 +212,11 @@ following comparative feasibility testing.
 
 === Implementation Status
 
-The runnable plugin has been verified in a clean Neovim
-session and against the configured local Ollama model.
-
-The live review produced source-precise spelling and grammar
-quickfix entries with verified byte ranges. Automated tests
-cover module loading, configuration, command registration,
-source mapping, protected markup, response decoding,
-cancellation, stale results, partial failure and hard limits.
+The runnable plugin implements module loading,
+configuration, command registration, source mapping,
+protected markup, response decoding, individual and bulk
+correction application, cancellation, stale results,
+partial failure and hard limits.
 
 === Normal Workflow
 
@@ -246,7 +228,8 @@ cancellation, stale results, partial failure and hard limits.
 . Structured findings are validated and consolidated.
 . The quickfix list is populated and opened.
 . The author navigates through the findings.
-. Corrections or rewrites are made manually.
+. The author applies the current correction, applies all
+  validated corrections or ignores the recommendations.
 
 === Commands
 
@@ -262,40 +245,33 @@ cancellation, stale results, partial failure and hard limits.
 
 |`:FoundationReviewHealth`
 |Check Ollama availability, configuration and model status.
+
+|`:FoundationReviewApply`
+|Apply the correction at the current quickfix entry.
+
+|`:FoundationReviewApplyAll`
+|Apply all remaining corrections from the latest review.
 |===
 
 These commands constitute the implemented command API.
 
-=== Finding Types
+=== Findings
 
-The plugin shall distinguish between two finding types.
+Each finding is a localised spelling, grammar or
+punctuation correction with an exact source quotation
+and suggested replacement.
 
-Correction::
-A localised spelling, grammar, punctuation, word-choice
-or consistency error, with an exact source quotation and
-suggested correction.
-
-Sentence rewrite::
-An unwieldy or structurally deficient sentence, with the
-complete original sentence and an advisory replacement.
-
-Both finding types shall use quickfix.
+All findings use quickfix severity `W`.
 
 === Example Quickfix Output
 
 [source,text]
 ----
 article.adoc|24 col 18| W: Grammar: "it's" -> "its"
-article.adoc|47 col 1| I: Sentence: Consider splitting sentence
 article.adoc|83 col 12| W: Spelling: "organize" -> "organise"
 ----
 
-Severity classifications:
-
-* `W` -- Localised correction.
-* `I` -- Advisory readability or structure rewrite.
-
-Severity is derived from the finding type, never from
+Severity is derived by the plugin, never from
 the model response.
 
 `E` is not used, because the model supplies no
@@ -334,10 +310,6 @@ require("foundation-review").setup({
     spelling = true,
     grammar = true,
     punctuation = true,
-    sentence_readability = true,
-    structure = true,
-    word_choice = true,
-    consistency = true,
   },
 
   review = {
@@ -351,6 +323,8 @@ require("foundation-review").setup({
 
   keymaps = {
     review = "<leader>ar",
+    apply = "<leader>aa",
+    apply_all = "<leader>aA",
   },
 })
 ----
@@ -378,11 +352,15 @@ produce reviewable prose with reversible source-byte maps.
 
 == Review Principles
 
-=== Non-Destructive Operation
+=== Author-Controlled Edits
 
-The reviewer shall never modify the buffer automatically.
+Review never changes the buffer.
 
-All findings remain advisory.
+The plugin modifies text only after the author invokes an
+individual or bulk application command.
+
+Every edit remains undoable through Neovim's normal undo
+history.
 
 === British English
 
@@ -399,9 +377,6 @@ according to context rather than rejected categorically.
 
 The model shall preserve the author's meaning, tone,
 terminology and intended style.
-
-Sentence rewrites shall make only the changes needed
-to improve construction and readability.
 
 === Local Privacy
 
@@ -453,7 +428,9 @@ if (Configured filetype?) then (Yes)
   :Navigate findings;
 
   if (Correction appropriate?) then (Yes)
-    :Edit document manually;
+    :Apply one or all corrections;
+    :Verify exact source slice;
+    :Update buffer in one undoable operation;
   else (No)
     :Ignore suggestion;
   endif
@@ -508,7 +485,7 @@ stop
 
 == Success Criteria
 
-The implemented proof of concept has demonstrated:
+The implemented proof of concept demonstrates:
 
 [cols="1,1",frame=none, grid=none]
 |===
@@ -518,25 +495,24 @@ a|
 . British English spelling is handled correctly.
 . Representative grammar errors are identified.
 . Representative punctuation errors are identified.
-. Representative structure and word-choice problems are
-  identified.
-. Inconsistent document usage is identified.
-. Unwieldy sentences receive useful advisory rewrites.
 . Correct British English produces acceptably few
   false-positive findings.
-a|[start=10]
+a|[start=7]
 . A supported Neovim buffer can be reviewed.
 . Unsaved changes are included in the review.
 . Findings appear in the quickfix list.
 . Navigation reaches verified source locations.
 . Protected markup is not reported as prose.
 . Unsupported filetypes are rejected.
-. No document content is modified automatically.
+. A selected correction can be applied safely.
+. All corrections can be applied atomically and undone
+  as one operation.
+. Stale or overlapping corrections are not applied.
 . The workflow functions without external connectivity.
 |===
 
-The remaining release work is hardening rather than proving
-the core editor-to-model-to-quickfix workflow.
+The remaining release work is hardening and language-quality
+evaluation.
 
 == Model Evaluation
 
@@ -561,10 +537,6 @@ The corpus shall include:
 * Spelling errors.
 * Grammar errors.
 * Punctuation errors.
-* Unwieldy sentences.
-* Structure errors.
-* Word-choice errors.
-* Inconsistent document usage.
 * Correct British English.
 * Clean passages containing no errors.
 * AsciiDoc markup and protected regions.
@@ -576,7 +548,6 @@ Evaluation shall measure:
 * Precision and false-positive rate.
 * Recall by supported category.
 * Correction quality.
-* Sentence-rewrite usefulness.
 * Exact-source quotation accuracy.
 * Finding granularity.
 * Markup protection.
@@ -592,7 +563,6 @@ Potential later capabilities include:
 
 * Project-specific terminology dictionaries.
 * Optional inline diagnostics.
-* Selective correction application.
 * Incremental review of changed sections.
 * Review of multiple buffers.
 * Configurable severity thresholds.

@@ -24,10 +24,6 @@ M.default_config = {
     spelling = true,
     grammar = true,
     punctuation = true,
-    sentence_readability = true,
-    structure = true,
-    word_choice = true,
-    consistency = true,
   },
 
   review = {
@@ -42,7 +38,15 @@ M.default_config = {
 
   keymaps = {
     review = "<leader>ar",
+    apply = "<leader>aa",
+    apply_all = "<leader>aA",
   },
+}
+
+local supported_checks = {
+  spelling = true,
+  grammar = true,
+  punctuation = true,
 }
 
 ---Validate configuration
@@ -75,6 +79,9 @@ function M.validate(config)
 
   if config.checks then
     for check, enabled in pairs(config.checks) do
+      if not supported_checks[check] then
+        return nil, string.format("unsupported check: %s", check)
+      end
       if type(enabled) ~= "boolean" then
         return nil, string.format("checks.%s must be a boolean", check)
       end

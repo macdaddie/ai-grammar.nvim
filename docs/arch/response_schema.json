@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft-07/schema#",
-  "$id": "https://foundation-review.nvim/response/v2",
+  "$id": "https://foundation-review.nvim/response/v3",
   "title": "Foundation Review Response Schema",
   "description": "Response contract for foundation-review.nvim findings",
   "type": "object",
@@ -12,18 +12,14 @@
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["correction", "rewrite"]
+            "enum": ["correction"]
           },
           "category": {
             "type": "string",
             "enum": [
               "spelling",
               "grammar",
-              "punctuation",
-              "sentence_readability",
-              "structure",
-              "word_choice",
-              "consistency"
+              "punctuation"
             ]
           },
           "original": {

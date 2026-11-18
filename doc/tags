@@ -1,4 +1,6 @@
 :FoundationReview	foundation-review.txt	/*:FoundationReview*
+:FoundationReviewApply	foundation-review.txt	/*:FoundationReviewApply*
+:FoundationReviewApplyAll	foundation-review.txt	/*:FoundationReviewApplyAll*
 :FoundationReviewCancel	foundation-review.txt	/*:FoundationReviewCancel*
 :FoundationReviewHealth	foundation-review.txt	/*:FoundationReviewHealth*
 foundation-review	foundation-review.txt	/*foundation-review*

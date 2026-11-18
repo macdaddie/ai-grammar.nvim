@@ -20,18 +20,17 @@ The complete Neovim-to-Ollama-to-quickfix path has been
 verified with the default model. The automated headless suite
 also verifies loading, configuration, source mapping, markup
 masking, validation, cancellation, stale-result handling,
-partial failure and hard-limit reporting.
+partial failure, hard-limit reporting and correction
+application.
 
 == Checks
 
 * Spelling.
 * Grammar.
 * Punctuation.
-* Sentence readability.
-* Sentence structure.
-* Word choice.
-* Consistency of spelling, capitalisation, hyphenation and
-  terminology within the reviewed document.
+
+Other editorial categories and sentence rewriting are
+deliberately outside scope.
 
 == Requirements
 
@@ -106,6 +105,8 @@ require("foundation-review").setup({
   },
   keymaps = {
     review = "<leader>ar",
+    apply = "<leader>aa",
+    apply_all = "<leader>aA",
   },
 })
 ----
@@ -121,14 +122,70 @@ Cancel the active review for the current buffer.
 `FoundationReviewHealth`::
 Check whether the configured Ollama model is available.
 
-Findings are advisory and are never applied automatically.
+`FoundationReviewApply`::
+Apply the correction at the current quickfix entry.
+
+`FoundationReviewApplyAll`::
+Apply all remaining corrections from the latest review.
+
+== Review and Apply Corrections
+
+. Open a supported `text`, `markdown` or `asciidoc` buffer.
+. Run `:FoundationReview` or press `<leader>ar`.
+. Wait for the review to populate the quickfix list.
+. Navigate findings with `:cnext`, `:cprevious` or the
+  quickfix window.
+. Apply the current quickfix correction with
+  `:FoundationReviewApply` or `<leader>aa`.
+. Alternatively, apply every remaining correction from that
+  review with `:FoundationReviewApplyAll` or `<leader>aA`.
+
+The current correction is the entry selected in the
+Foundation Review quickfix list.
+The apply command can be invoked from either the quickfix
+window or the reviewed buffer.
+
+The latest review replaces the previous Foundation Review
+results for that buffer.
+Starting another review therefore replaces the corrections
+available for application.
+
+Review never changes the buffer by itself.
+Corrections are applied only after one of the explicit
+application commands.
+
+Individual application verifies that the source still
+matches the reviewed text.
+Bulk application preflights every correction, rejects stale
+or overlapping ranges, and applies all corrections as one
+undoable change.
+
+If text covered by a recommendation has changed since the
+review, that recommendation is not applied.
+If any bulk correction is stale or overlaps another
+correction, the entire bulk operation is cancelled without
+changing the buffer.
+
+After bulk application, one `u` restores the buffer to its
+state before the fixes were applied.
+Individually applied corrections use Neovim's normal undo
+history.
 
 Quickfix entries contain source-verified start and end byte
-positions. Corrections use warning severity and advisory
-readability or structure rewrites use information severity.
+positions. All corrections use warning severity.
 
 If one chunk fails, findings from successful chunks remain
 available and the quickfix context marks the review incomplete.
+
+For command-oriented help inside Neovim, run:
+
+[source,vim]
+----
+:help foundation-review
+----
+
+The help source is also available at
+link:doc/foundation-review.txt[`doc/foundation-review.txt`].
 
 == Development
 

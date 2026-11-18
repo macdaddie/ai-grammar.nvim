@@ -20,3 +20,15 @@ vim.api.nvim_create_user_command("FoundationReviewHealth", function()
 end, {
   desc = "Check the Foundation Review configuration",
 })
+
+vim.api.nvim_create_user_command("FoundationReviewApply", function()
+  require("foundation-review").apply()
+end, {
+  desc = "Apply the current Foundation Review correction",
+})
+
+vim.api.nvim_create_user_command("FoundationReviewApplyAll", function()
+  require("foundation-review").apply_all()
+end, {
+  desc = "Apply all Foundation Review corrections",
+})

@@ -9,12 +9,15 @@
 * Plain text, Markdown and AsciiDoc adapters are implemented.
 * Reviews use asynchronous local Ollama requests.
 * Validated findings are published to quickfix.
+* Corrections can be applied individually or all at once.
 * Headless integration tests cover the critical workflow.
 * A real Ollama review produces source-precise quickfix entries.
 
 == Completed
 
-* ADR-026 expands the response contract to seven categories.
+* ADR-028 restricts the response contract to spelling,
+  grammar and punctuation.
+* ADR-029 adds explicit individual and bulk application.
 * Exact and whitespace-collapsed quotation matching.
 * Ambiguous quotation rejection.
 * Length-preserving markup masking and source-byte maps.
@@ -22,6 +25,8 @@
 * Packaged JSON Schema with deterministic Ollama options.
 * Sequential chunk scheduling and partial-failure handling.
 * Cancellation and stale-buffer protection.
+* Exact-source preflight, overlap rejection and one-step undo
+  for bulk correction application.
 * `vim.pack`, lazy.nvim and native-package documentation.
 * Headless Neovim test workflow.
 * MIT Licence and renamed public GitHub repository.
@@ -51,8 +56,9 @@ reversible source-byte map. Raw RTF shall not be sent to the model.
 The benchmark begins only after the plugin passes its automated and
 real-Ollama integration tests.
 
-The corpus shall cover all seven categories, British English,
-protected markup, repeated quotations and clean prose.
+The corpus shall cover spelling, grammar and punctuation,
+British English, protected markup, repeated quotations and
+clean prose.
 
 Measure precision, recall, false-positive rate, correction accuracy,
-rewrite quality, consistency accuracy and exact-source accuracy.
+and exact-source accuracy.

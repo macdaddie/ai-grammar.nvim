@@ -3,7 +3,7 @@ local finding = {
   properties = {
     type = {
       type = "string",
-      enum = { "correction", "rewrite" },
+      enum = { "correction" },
     },
     category = {
       type = "string",
@@ -11,10 +11,6 @@ local finding = {
         "spelling",
         "grammar",
         "punctuation",
-        "sentence_readability",
-        "structure",
-        "word_choice",
-        "consistency",
       },
     },
     original = { type = "string", minLength = 1 },
