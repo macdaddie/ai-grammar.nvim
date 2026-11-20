@@ -1,3 +1,10 @@
+-- Correction application state and extmark tracking.
+-- Source verification lives in validate.lua under ADR-016, ADR-019 and
+-- ADR-021. ADR-035 adds the edit notifications that let the controller
+-- rebase an active review after a plugin-originated edit.
+-- See docs/arch/arch_design.adoc: Correction Applier and Correction
+-- Application.
+
 local M = {}
 
 local namespace = vim.api.nvim_create_namespace("ai-proofread-apply")
@@ -16,6 +23,27 @@ local function split_replacement(text)
   return vim.split(text, "\n", { plain = true })
 end
 
+-- Quickfix columns and rebase deltas are byte-oriented, never screen columns.
+local function byte_offset(buffer, row, column)
+  local lines = vim.api.nvim_buf_get_lines(buffer, 0, row, false)
+  local offset = 1
+  for _, line in ipairs(lines) do
+    offset = offset + #line + 1
+  end
+  return offset + column
+end
+
+-- Report a plugin-originated edit to the owning controller. It uses the byte
+-- delta to rebase the chunks that have not been validated yet.
+local function notify_edit(buffer, edits)
+  local state = states[buffer]
+  local listener = state and state.listener
+  if listener then
+    pcall(listener, edits)
+  end
+end
+
+-- Remove entries by immutable user_data id while preserving list context.
 local function remove_quickfix_entries(ids)
   local quickfix = vim.fn.getqflist({
     id = 0,
@@ -53,6 +81,8 @@ local function remove_quickfix_entries(ids)
   end
 end
 
+-- The extmark follows edits, but the exact source slice is checked again
+-- before any buffer change is allowed.
 local function resolve(finding)
   local mark = vim.api.nvim_buf_get_extmark_by_id(
     finding.buffer,
@@ -132,19 +162,33 @@ local function state_for_all()
   return state
 end
 
-function M.register(buffer, review_id, findings)
-  vim.api.nvim_buf_clear_namespace(buffer, namespace, 0, -1)
+-- State is additive per review: a buffer accumulates findings from several
+-- published chunks under the same review id.
+local function state_for(buffer, review_id)
+  local state = states[buffer]
+  if not state or state.review_id ~= review_id then
+    state = {
+      buffer = buffer,
+      review_id = review_id,
+      findings = {},
+      by_id = {},
+    }
+    states[buffer] = state
+  end
+  return state
+end
 
-  local state = {
-    buffer = buffer,
-    review_id = review_id,
-    findings = {},
-    by_id = {},
-  }
-  states[buffer] = state
+-- Register a published batch with stable ids allocated by the controller.
+-- Extmarks move with intervening edits and later supply quickfix positions.
+function M.add(buffer, review_id, findings, first_index)
+  if #findings == 0 then
+    return
+  end
+
+  local state = state_for(buffer, review_id)
 
   for index, finding in ipairs(findings) do
-    local id = review_id .. ":" .. index
+    local id = review_id .. ":" .. (first_index + index - 1)
     local tracked = vim.deepcopy(finding)
     tracked.application_id = id
     tracked.buffer = buffer
@@ -168,6 +212,53 @@ function M.register(buffer, review_id, findings)
   end
 end
 
+function M.register(buffer, review_id, findings)
+  M.reset(buffer)
+  M.add(buffer, review_id, findings, 1)
+end
+
+function M.reset(buffer)
+  if vim.api.nvim_buf_is_valid(buffer) then
+    vim.api.nvim_buf_clear_namespace(buffer, namespace, 0, -1)
+  end
+  states[buffer] = nil
+end
+
+-- The controller listener receives only plugin-originated edit deltas.
+function M.set_listener(buffer, review_id, callback)
+  local state = state_for(buffer, review_id)
+  state.listener = callback
+end
+
+-- Read positions from extmarks, not from the original model coordinates.
+function M.positions(buffer)
+  local state = states[buffer]
+  local positions = {}
+  if not state then
+    return positions
+  end
+
+  for _, finding in ipairs(state.findings) do
+    local mark = vim.api.nvim_buf_get_extmark_by_id(
+      buffer,
+      namespace,
+      finding.extmark,
+      { details = true }
+    )
+    if #mark >= 2 then
+      local details = mark[3] or {}
+      positions[finding.application_id] = {
+        lnum = mark[1] + 1,
+        col = mark[2] + 1,
+        end_lnum = (details.end_row or mark[1]) + 1,
+        end_col = details.end_col or mark[2],
+      }
+    end
+  end
+  return positions
+end
+
+-- Apply only after exact source verification, then report the byte delta.
 function M.current()
   local _, finding, err = state_for_quickfix()
   if not finding then
@@ -186,6 +277,12 @@ function M.current()
     return nil, range_err
   end
 
+  local start_byte = byte_offset(
+    finding.buffer,
+    range.start_row,
+    range.start_col
+  )
+
   edit(finding.buffer, range, finding.suggestion, false)
   finding.applied = true
   pcall(
@@ -195,10 +292,17 @@ function M.current()
     finding.extmark
   )
   remove_quickfix_entries({ [finding.application_id] = true })
+  notify_edit(finding.buffer, {
+    {
+      start_byte = start_byte,
+      delta_bytes = #finding.suggestion - #finding.source_text,
+    },
+  })
   notify("applied correction")
   return true
 end
 
+-- Ignoring changes no buffer text, so no rebase notification is needed.
 function M.ignore()
   local _, finding, err = state_for_quickfix()
   if not finding then
@@ -218,6 +322,9 @@ function M.ignore()
   return true
 end
 
+-- Preflight every range before editing. Edits run from the end of the buffer
+-- towards the start, are joined into one undo step, and the aggregate deltas
+-- are reported once.
 function M.all()
   local state = state_for_all()
   if not state then
@@ -237,6 +344,11 @@ function M.all()
       pending[#pending + 1] = {
         finding = finding,
         range = range,
+        start_byte = byte_offset(
+          state.buffer,
+          range.start_row,
+          range.start_col
+        ),
       }
     end
   end
@@ -304,6 +416,17 @@ function M.all()
     applied_ids[correction.finding.application_id] = true
   end
   remove_quickfix_entries(applied_ids)
+
+  local edits = {}
+  for _, correction in ipairs(pending) do
+    edits[#edits + 1] = {
+      start_byte = correction.start_byte,
+      delta_bytes = #correction.finding.suggestion
+        - #correction.finding.source_text,
+    }
+  end
+  notify_edit(state.buffer, edits)
+
   notify(string.format("applied %d corrections", #pending))
   return true
 end

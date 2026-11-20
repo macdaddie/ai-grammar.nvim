@@ -5,8 +5,8 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.10
-:revdate: 2026-11-18
+:revnumber: 0.12
+:revdate: 2026-11-19
 
 == Architecture Overview
 
@@ -485,7 +485,7 @@ require("ai-proofread").setup({
   review = {
     chunk_size = 2500,
     hard_limit = 12000,
-    max_concurrent = 1,
+    max_concurrent = 1,  -- Reserved; no runtime effect.
   },
 
   quickfix = {
@@ -880,24 +880,33 @@ Lua -> Lua : Protect markup
 Lua -> Lua : Prepare chunks
 
 loop Each chunk
+  Lua -> Lua : Check changedtick
   Lua -> Adapter : Submit review request
   Adapter -> Model : JSON inference request
   Model --> Adapter : Structured response
   Adapter --> Lua : Parsed findings
   Lua -> Lua : Validate and locate findings
+  Lua -> Applier : Add validated corrections
+  Lua -> Neovim : Append quickfix entries
+
+  alt Explicit apply during review
+    Author -> Neovim : Apply current or all
+    Neovim -> Applier : Verified findings
+    Applier -> Neovim : One undoable edit
+    Applier --> Lua : Byte and line deltas
+    Lua -> Lua : Rebase pending chunks
+    Lua -> Neovim : Refresh quickfix positions
+  else Ignore during review
+    Author -> Neovim : Ignore current
+    Neovim -> Applier : Mark ignored
+    Neovim -> Neovim : Remove quickfix entry
+  end
 end
 
-Lua -> Lua : Check changedtick
-
-alt Buffer unchanged
-  Lua -> Neovim : Populate quickfix
-  Neovim --> Author : Navigate findings
-  Author -> Neovim : Apply current or all
-  Neovim -> Applier : Validated findings
-  Applier -> Applier : Preflight exact ranges
-  Applier -> Neovim : One undoable edit
-else Buffer modified
+alt External buffer change
   Lua -> Neovim : Report stale review
+else Cancellation
+  Lua -> Neovim : Remove published entries
 end
 
 @enduml
@@ -914,11 +923,15 @@ The controller shall record:
 * Source lines.
 * Review identifier.
 
-Before publishing results, the controller shall verify
+Before publishing each chunk, the controller shall verify
 that the original buffer still exists and that its
 changedtick has not changed.
 
-Stale results shall be discarded.
+An external change shall discard the review.
+
+An explicit apply from the plugin's own correction state
+shall instead rebase pending chunks and advance the baseline
+changedtick, as recorded in ADR-035.
 
 == Document Segmentation
 
@@ -962,27 +975,51 @@ The implementation processes one chunk at a time.
 Concurrency may be introduced later if benchmarks
 demonstrate a benefit.
 
+`review.max_concurrent` is reserved for that decision and
+has no runtime effect.
+
 The default shall be one general proofreading pass
 per chunk.
 
-The controller shall aggregate findings after
-scheduled chunks complete or fail.
+The controller shall publish findings after each chunk
+completes or fails.
 
 == Quickfix Integration
 
 The plugin shall use Neovim's native quickfix list.
+
+The controller shall create the list when the review begins
+and append each chunk's sorted findings to that list.
 
 Illustrative implementation:
 
 [source,lua]
 ----
 vim.fn.setqflist({}, "r", {
-  title = "AI Proofread",
-  items = findings,
+  title = "AI Proofread", -- <1>
+  items = {},
 })
 
-vim.cmd("copen")
+local id = vim.fn.getqflist({ id = 0 }).id -- <2>
+
+vim.fn.setqflist({}, "a", { -- <3>
+  id = id,
+  items = findings,
+})
 ----
+<1> The title is fixed. Progress belongs in quickfix context.
+<2> The id is captured once so every append targets the same list.
+<3> Each validated chunk is appended, so entries removed by apply or
+ignore are never restored from an accumulator.
+
+The production counterparts are
+`lua/ai-proofread/quickfix.lua` and
+`lua/ai-proofread/controller.lua`.
+
+The list title shall remain `AI Proofread`.
+
+Progress and completion shall be reported through quickfix
+context.
 
 Each finding shall include:
 
@@ -995,6 +1032,11 @@ Each finding shall include:
 * An immutable finding identifier in quickfix `user_data`.
 
 Findings shall be sorted by source location.
+
+When `quickfix.auto_open` is enabled, the window shall open
+on the first published finding.
+
+The source window and cursor shall be restored afterwards.
 
 Corrections shall be applied only through explicit
 individual or bulk application commands.
@@ -1087,6 +1129,9 @@ Cancellation shall terminate the request where possible.
 
 The controller shall prevent cancelled or superseded
 requests from publishing results.
+
+Cancellation shall also remove quickfix entries and extmarks
+belonging to the cancelled review.
 
 == Security and Privacy
 

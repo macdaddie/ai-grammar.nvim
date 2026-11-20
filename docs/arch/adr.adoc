@@ -5,7 +5,7 @@
 :sectnums:
 :icons: font
 :source-highlighter: rouge
-:revnumber: 0.8
+:revnumber: 0.9
 :revdate: 2026-11-18
 
 == Purpose
@@ -165,6 +165,10 @@ Superseded decisions shall not be deleted.
 
 |034
 |Support native `fm` and local Ollama backends
+|Accepted
+
+|035
+|Stream published findings and rebase after explicit apply
 |Accepted
 |===
 
@@ -1960,6 +1964,132 @@ proofreading accuracy.
 
 Tests shall cover backend selection, structured `fm` output,
 cancellation and common validation after inference.
+
+=== ADR-035: Streaming Findings and Rebase on Apply
+
+Status:: Accepted
+Date:: 2026-11-18
+Supersedes:: ADR-011
+Refines:: ADR-005, ADR-027, ADR-029, ADR-030
+
+==== Context
+
+The controller already processes chunks sequentially and validates
+each response before advancing.
+
+It published the complete quickfix list only after the final chunk.
+Time to the first finding was therefore the sum of all chunk
+latencies.
+
+ADR-011 required stale results to be discarded because no result
+was visible until the review finished.
+
+Streaming changes that condition.
+
+Findings, extmarks and quickfix entries are live while later
+chunks are still being reviewed.
+
+An explicit correction application changes the buffer during that
+window.
+
+==== Decision
+
+The controller shall publish each chunk's validated findings as
+soon as that chunk completes.
+
+Findings shall be sorted within the chunk and appended to the
+existing AI Proofread quickfix list.
+
+The controller shall never rebuild the list from its accumulator,
+so entries removed by apply or ignore are not restored.
+
+When `quickfix.auto_open` is enabled, the quickfix window shall
+open on the first published finding.
+
+The source window and cursor shall be restored after opening.
+
+The quickfix title shall remain `AI Proofread`.
+
+Progress and completeness shall be reported through quickfix
+context instead.
+
+Finding identifiers shall come from a monotonically increasing
+published count so they remain stable across appends.
+
+Correction registration shall be additive.
+
+Starting a new review or cancelling an active one shall clear the
+extmarks, correction state and quickfix entries belonging to the
+superseded review.
+
+Ignoring leaves the buffer unchanged.
+
+The review shall continue and later findings shall append
+normally.
+
+Applying a correction does change the buffer.
+
+Only already published findings can be applied, so every edit lies
+at or before the currently reviewed chunk.
+
+The controller shall record the byte and line deltas of each
+plugin originated edit.
+
+It shall rebase the absolute source offsets and protected spans
+of pending chunks by those deltas, update their snapshot reference
+and advance its baseline changedtick.
+
+Published quickfix positions shall be refreshed from extmarks,
+which already track the edit.
+
+Review shall then continue.
+
+Any other buffer change shall invalidate the review.
+
+The controller shall stop outstanding work, remove that review's
+published entries and extmarks, and report the review as stale.
+
+Cancellation shall remove the same artefacts.
+
+The `complete` context flag shall remain false until every chunk
+has returned or failed.
+
+Validation, source coordinates and finding categories are
+unchanged by this decision.
+
+Bounded concurrency remains out of scope.
+
+==== Rationale
+
+Publishing per chunk reduces time to the first useful finding
+without changing inference order.
+
+Appending rather than rebuilding keeps authorial actions intact
+while the review is still running.
+
+Extmarks already follow intervening edits, so they are the
+authoritative source for refreshed quickfix positions.
+
+Exact source slice verification in `apply` still guards every
+edit.
+
+Rebasing is safe because applied findings can only come from
+earlier chunks, making every affected edit precede the pending
+source ranges.
+
+==== Consequences
+
+ADR-011's discard rule is superseded only for buffer changes
+caused by the plugin's own apply operation.
+
+External edits still discard the review.
+
+The `review.max_concurrent` setting remains reserved for a later
+decision and has no runtime effect.
+
+Tests shall cover incremental publication, stable identifiers,
+apply and ignore during review, rebasing after edits, stale
+external changes and cancellation cleanup.
 
 == Decision Governance
 

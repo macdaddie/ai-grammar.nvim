@@ -22,8 +22,8 @@ verified with both native `fm` and the default Ollama model.
 The automated headless suite also verifies loading,
 configuration, backend selection, source mapping, markup
 masking, validation, cancellation, stale-result handling,
-partial failure, hard-limit reporting, visual selection and
-correction application.
+partial failure, hard-limit reporting, visual selection,
+streaming publication and correction application.
 
 == Checks
 
@@ -116,6 +116,7 @@ require("ai-proofread").setup({
   review = {
     chunk_size = 2500,
     hard_limit = 12000,
+    max_concurrent = 1, -- Reserved; no runtime effect.
   },
   quickfix = {
     auto_open = true,
@@ -134,6 +135,9 @@ All three checks are enabled by default.
 Set a check to `false` to exclude that category from the
 prompt and from validation.
 The filetype table is an allowlist.
+
+`review.max_concurrent` is reserved for a later bounded
+concurrency decision and currently has no runtime effect.
 
 == Inference Backends
 
@@ -198,15 +202,17 @@ compatibility aliases.
   or linewise and press `<leader>ar`.
   `:AIProofreadSelection` reviews the most recent visual
   selection.
-. Wait for the review to populate the quickfix list.
-. Navigate findings with `:cnext`, `:cprevious` or the
-  quickfix window.
+. Findings appear in the AI Proofread quickfix list as each
+  chunk completes.
+. Navigate published findings with `:cnext`, `:cprevious` or
+  the quickfix window while later chunks are still reviewed.
 . Apply the current quickfix correction with
   `:AIProofreadApply` or `<leader>aa`.
 . Ignore the current recommendation with
   `:AIProofreadIgnore` or `<leader>ai`.
-. Alternatively, apply every remaining correction from that
-  review with `:AIProofreadApplyAll` or `<leader>aA`.
+. Alternatively, apply every remaining published correction
+  from that review with `:AIProofreadApplyAll` or
+  `<leader>aA`.
 
 The current correction is the entry selected in the
 AI Proofread quickfix list.
@@ -217,6 +223,23 @@ The latest review replaces the previous AI Proofread
 results for that buffer.
 Starting another review therefore replaces the corrections
 available for application.
+
+Each validated chunk is appended to the current list.
+Findings already removed by apply or ignore are not restored
+as later chunks arrive.
+The quickfix title remains `AI Proofread`.
+
+The quickfix context reports `complete`, `chunks_done`,
+`chunks_total`, `review_id`, `rejected`, `failed_chunks` and
+`unreviewable_sections`.
+The `complete` flag is false while any chunk is outstanding.
+A review that finishes with a failed or unreviewable chunk
+also leaves it false.
+
+With `quickfix.auto_open = true`, the quickfix window opens
+on the first published finding.
+The source window and cursor are restored afterwards, so
+reviewing does not steal focus.
 
 Review never changes the buffer by itself.
 Corrections are applied only after one of the explicit
@@ -238,6 +261,18 @@ After bulk application succeeds, all applied entries are
 removed and the quickfix list is empty.
 Failed or stale corrections remain in the list.
 
+Apply and ignore also work while a review is still active.
+Applying shifts the source ranges of outstanding chunks and
+refreshes the positions of published findings.
+The review then continues with later chunks.
+Ignoring leaves the buffer unchanged, so the review simply
+continues.
+
+Any other buffer change makes the review stale.
+The plugin then stops the outstanding request and clears the
+published entries.
+`:AIProofreadCancel` does the same without reporting an error.
+
 If text covered by a recommendation has changed since the
 review, that recommendation is not applied.
 If any bulk correction is stale or overlaps another
@@ -254,8 +289,10 @@ Undo does not restore removed quickfix entries; run
 Quickfix entries contain source-verified start and end byte
 positions. All corrections use warning severity.
 
-If one chunk fails, findings from successful chunks remain
-available and the quickfix context marks the review incomplete.
+If one chunk fails or exceeds the hard limit, findings from
+successful chunks remain available.
+The quickfix context records the `failed_chunks` and
+`unreviewable_sections` counts and leaves `complete` false.
 
 For command-oriented help inside Neovim, run:
 
@@ -301,8 +338,9 @@ Run `:AIProofreadHealth` before reviewing. The message reports
 the selected backend and, for Ollama, the models currently held
 in memory.
 
-A quickfix title of `AI Proofread: review incomplete` means at
-least one chunk failed, timed out or exceeded the hard limit.
+The quickfix title is always `AI Proofread`.
+If `context.complete` is false after the final chunk, inspect
+`context.failed_chunks` and `context.unreviewable_sections`.
 Findings from successful chunks remain available.
 
 A preload request can time out while another model is loading

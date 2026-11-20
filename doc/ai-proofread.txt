@@ -50,7 +50,7 @@ selected backend and model before reviewing.
                                                 *:AIProofread*
 :AIProofread
         Review the current buffer and replace the AI Proofread quickfix
-        list when the review completes.
+        list. Each validated chunk is published as soon as it completes.
 
                                       *:AIProofreadSelection*
 :AIProofreadSelection
@@ -69,24 +69,44 @@ selected backend and model before reviewing.
                                             *:AIProofreadApply*
 :AIProofreadApply
         Apply the correction at the current quickfix entry after verifying
-        that its source text has not changed. A successful correction is
-        removed from quickfix and the next outstanding entry is selected.
+        that its source text has not changed. This also works while a
+        review is active. Pending chunks are rebased and the review
+        continues. A successful correction is removed from quickfix and
+        the next outstanding entry is selected.
 
                                          *:AIProofreadApplyAll*
 :AIProofreadApplyAll
-        Apply all remaining corrections from the latest review. The command
-        aborts before editing if any range is stale or overlaps another
-        correction. A successful bulk application is one undo step and
-        clears the applied entries from quickfix. Failed corrections remain.
+        Apply all remaining published corrections from the latest review.
+        This also works during an active review. The command aborts before
+        editing if any range is stale or overlaps another correction. A
+        successful bulk application is one undo step and clears the applied
+        entries from quickfix. Failed corrections remain.
 
                                            *:AIProofreadIgnore*
 :AIProofreadIgnore
         Ignore the current quickfix recommendation without changing the
-        buffer. The entry is removed, the next recommendation is selected,
-        and the ignored correction is excluded from bulk application.
+        buffer. This also works during an active review; the review simply
+        continues. The entry is removed, the next recommendation is
+        selected, and the ignored correction is excluded from bulk
+        application.
 
 A suggestion that does not differ from the quoted source text is rejected
 and never reaches quickfix.
+
+Findings are appended to the AI Proofread quickfix list as each chunk is
+validated. Entries removed by apply or ignore are not restored by later
+chunks. The quickfix title remains "AI Proofread". The quickfix context
+reports complete, chunks_done, chunks_total, review_id, rejected,
+failed_chunks and unreviewable_sections. The complete field is false
+while chunks remain and after a failed or unreviewable chunk.
+
+When quickfix.auto_open is enabled, the quickfix window opens on the first
+published finding. The source window and cursor are restored afterwards.
+
+Any buffer change outside the plugin's apply operation makes the review
+stale. The plugin stops the outstanding request and clears published
+findings. |:AIProofreadCancel| clears the same artefacts for an active
+review.
 
 The former foundation-review Lua module and FoundationReview commands
 remain available as deprecated compatibility aliases.
@@ -133,10 +153,14 @@ review~
         chunk_size    Byte budget per review chunk. Default: 2500.
         hard_limit    Byte budget for a single reviewable section.
                       Default: 12000.
+        max_concurrent
+                      Reserved for bounded concurrency. Default: 1.
+                      It currently has no runtime effect.
 
 quickfix~
-        auto_open     Open the quickfix window when findings arrive.
-                      Default: true.
+        auto_open     Open the quickfix window on the first published
+                      finding, then restore the source window. Default:
+                      true.
 
 keymaps~
         review, review_selection, apply, apply_all and ignore accept a
@@ -168,9 +192,10 @@ The fm model is managed by macOS.
 Run |:AIProofreadHealth| before reviewing. For Ollama it reports the
 models currently held in memory.
 
-A quickfix title of "AI Proofread: review incomplete" means at least one
-chunk failed, timed out or exceeded the hard limit. Findings from
-successful chunks remain available.
+The quickfix title is always "AI Proofread". If context.complete is false
+after the final chunk, inspect context.failed_chunks and
+context.unreviewable_sections. Findings from successful chunks remain
+available.
 
 A preload request can time out while another model is loading or while
 the GPU is saturated. Preload failures are harmless and appear only at

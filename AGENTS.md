@@ -15,14 +15,15 @@
 ## Sources of truth
 
 - `docs/arch/adr.adoc` overrides prose in the other two documents. Decision status lives in the register table at the top of that file.
-- `docs/arch/concept.adoc` covers scope, UX, and success criteria. `docs/arch/arch_design.adoc` covers components, data contracts, and the Ollama transport.
+- `docs/arch/concept.adoc` covers scope, UX, and success criteria. `docs/arch/arch_design.adoc` covers components, data contracts, and the `fm` and Ollama inference transports.
+- `README.adoc` and `doc/ai-proofread.txt` are user-facing; keep commands, options, backend behaviour and aliases in step with the implementation.
 
 ## Document conventions
 
 - AsciiDoc only. Each file starts with a blank line, then `= Title`.
 - Hard-wrap prose at roughly 60–63 characters, one sentence per line. Preserve this when editing.
 - No Markdown syntax, hard-coded section numbers, or `---` horizontal rules.
-- On substantive edits, bump `:revnumber:` minor and set `:revdate:`. Current revisions: concept 0.8, arch_design 0.8, adr 0.7.
+- On substantive edits, bump `:revnumber:` minor and set `:revdate:`. Current revisions: concept 0.9, arch_design 0.10, adr 0.8.
 - British English (`en-GB`) is both the product default and the documentation convention. Never "correct" `colour`, `behaviour`, or collective agreement such as "The team have".
 
 ## Decisions an agent would otherwise reverse
@@ -49,6 +50,9 @@
   unsupported category or belong to a stale review.
 - Neovim quickfix columns are byte-oriented. Compute UTF-8 byte offsets from the buffer; never trust model-supplied coordinates.
 - Ollama contract: `POST /api/generate` with `stream: false`, `options.temperature: 0`, and `format` set to a JSON Schema. The findings JSON arrives as a string in the top-level `response` field and must be decoded a second time.
+- Native `fm` contract: `fm respond --model system --no-stream --greedy --schema <packaged> --instructions <system>` with the prompt on standard input. The response is direct JSON, not nested in an Ollama-style `response` field.
+- Ollama preload and `keep_alive` apply only to the `ollama` backend. The `fm` model is managed by macOS.
+- Reject no-op findings whose suggestion equals the model's `original` or the validated source slice.
 - Thinking-capable models (`qwen3.5:*`) can return an empty `response` unless `think: false` is set. This is a harness observation, not yet an ADR.
 - The plugin must not download models. The health check reports a missing model and fails visibly.
 

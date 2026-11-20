@@ -1002,6 +1002,314 @@ test("validator rejects a non-array findings envelope", function()
   equal(reason, "schema_invalid")
 end)
 
+test("quickfix receives findings before the final chunk completes", function()
+  local review = require("ai-proofread")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "teh first.",
+    "",
+    "And teh second.",
+  })
+
+  local callbacks = {}
+  review.setup({
+    keymaps = { review = false },
+    review = { chunk_size = 15 },
+    quickfix = { auto_open = false },
+    _transport = function(_, _, callback)
+      callbacks[#callbacks + 1] = callback
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  equal(#callbacks, 1)
+
+  callbacks[1](nil, {
+    findings = {
+      {
+        type = "correction",
+        category = "spelling",
+        original = "teh",
+        suggestion = "the",
+        message = "Incorrect spelling.",
+      },
+    },
+  })
+
+  local quickfix = vim.fn.getqflist({ items = 1, context = 1 })
+  equal(#quickfix.items, 1)
+  equal(quickfix.context.complete, false)
+  equal(quickfix.context.chunks_done, 1)
+  equal(quickfix.context.chunks_total, 2)
+  local first_id = quickfix.items[1].user_data.ai_proofread_id
+  assert(first_id)
+
+  callbacks[2](nil, {
+    findings = {
+      {
+        type = "correction",
+        category = "spelling",
+        original = "teh",
+        suggestion = "the",
+        message = "Incorrect spelling.",
+      },
+    },
+  })
+
+  quickfix = vim.fn.getqflist({ items = 1, context = 1 })
+  equal(#quickfix.items, 2)
+  equal(quickfix.context.complete, true)
+  equal(quickfix.items[1].user_data.ai_proofread_id, first_id)
+  assert(quickfix.items[2].user_data.ai_proofread_id ~= first_id)
+end)
+
+test("apply during review rebases later findings and keeps review running", function()
+  local review = require("ai-proofread")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "Cats is here.",
+    "",
+    "Teh there.",
+  })
+
+  local callbacks = {}
+  review.setup({
+    keymaps = { review = false, apply = false, apply_all = false },
+    review = { chunk_size = 20 },
+    quickfix = { auto_open = false },
+    _transport = function(_, _, callback)
+      callbacks[#callbacks + 1] = callback
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  equal(#callbacks, 1)
+
+  callbacks[1](nil, {
+    findings = {
+      {
+        type = "correction",
+        category = "grammar",
+        original = "Cats is",
+        suggestion = "Cats are\n",
+        message = "Use plural agreement.",
+      },
+    },
+  })
+  equal(#vim.fn.getqflist(), 1)
+  equal(review.apply(), true)
+  equal(#vim.fn.getqflist(), 0)
+
+  callbacks[2](nil, {
+    findings = {
+      {
+        type = "correction",
+        category = "spelling",
+        original = "Teh",
+        suggestion = "The",
+        message = "Incorrect spelling.",
+      },
+    },
+  })
+
+  local quickfix = vim.fn.getqflist({ items = 1, context = 1 })
+  equal(#quickfix.items, 1)
+  equal(quickfix.items[1].lnum, 4)
+  equal(quickfix.items[1].col, 1)
+  equal(quickfix.context.complete, true)
+end)
+
+test("ignore during review allows later findings to append", function()
+  local review = require("ai-proofread")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "teh first.",
+    "",
+    "And teh second.",
+  })
+
+  local callbacks = {}
+  review.setup({
+    keymaps = {
+      review = false,
+      apply = false,
+      apply_all = false,
+      ignore = false,
+    },
+    review = { chunk_size = 15 },
+    quickfix = { auto_open = false },
+    _transport = function(_, _, callback)
+      callbacks[#callbacks + 1] = callback
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  equal(#callbacks, 1)
+
+  callbacks[1](nil, {
+    findings = {
+      {
+        type = "correction",
+        category = "spelling",
+        original = "teh",
+        suggestion = "the",
+        message = "Incorrect spelling.",
+      },
+    },
+  })
+  equal(review.ignore(), true)
+  equal(#vim.fn.getqflist(), 0)
+
+  callbacks[2](nil, {
+    findings = {
+      {
+        type = "correction",
+        category = "spelling",
+        original = "teh",
+        suggestion = "the",
+        message = "Incorrect spelling.",
+      },
+    },
+  })
+
+  local quickfix = vim.fn.getqflist({ items = 1, context = 1 })
+  equal(#quickfix.items, 1)
+  equal(quickfix.items[1].lnum, 3)
+  equal(quickfix.context.complete, true)
+end)
+
+test("external edit during streaming discards published findings", function()
+  local review = require("ai-proofread")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "teh first.",
+    "",
+    "And teh second.",
+  })
+
+  local callbacks = {}
+  review.setup({
+    keymaps = { review = false },
+    review = { chunk_size = 15 },
+    quickfix = { auto_open = false },
+    _transport = function(_, _, callback)
+      callbacks[#callbacks + 1] = callback
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  equal(#callbacks, 1)
+
+  callbacks[1](nil, {
+    findings = {
+      {
+        type = "correction",
+        category = "spelling",
+        original = "teh",
+        suggestion = "the",
+        message = "Incorrect spelling.",
+      },
+    },
+  })
+  equal(#vim.fn.getqflist(), 1)
+
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, { "changed", "", "text" })
+  callbacks[2](nil, { findings = {} })
+  equal(#vim.fn.getqflist(), 0)
+end)
+
+test("cancel removes findings published by an active review", function()
+  local review = require("ai-proofread")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+    "teh first.",
+    "",
+    "And teh second.",
+  })
+
+  local callbacks = {}
+  review.setup({
+    keymaps = { review = false },
+    review = { chunk_size = 15 },
+    quickfix = { auto_open = false },
+    _transport = function(_, _, callback)
+      callbacks[#callbacks + 1] = callback
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  equal(#callbacks, 1)
+
+  callbacks[1](nil, {
+    findings = {
+      {
+        type = "correction",
+        category = "spelling",
+        original = "teh",
+        suggestion = "the",
+        message = "Incorrect spelling.",
+      },
+    },
+  })
+  equal(#vim.fn.getqflist(), 1)
+
+  equal(review.cancel(), true)
+  equal(#vim.fn.getqflist(), 0)
+
+  callbacks[2](nil, { findings = {} })
+  equal(#vim.fn.getqflist(), 0)
+end)
+
+test("quickfix opens on the first finding without stealing focus", function()
+  local review = require("ai-proofread")
+  local buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(buffer)
+  vim.bo[buffer].filetype = "text"
+  vim.api.nvim_buf_set_lines(buffer, 0, -1, false, { "teh text" })
+
+  local source_window = vim.api.nvim_get_current_win()
+  review.setup({
+    keymaps = { review = false },
+    quickfix = { auto_open = true },
+    _transport = function(_, _, callback)
+      callback(nil, {
+        findings = {
+          {
+            type = "correction",
+            category = "spelling",
+            original = "teh",
+            suggestion = "the",
+            message = "Incorrect spelling.",
+          },
+        },
+      })
+      return { kill = function() end }
+    end,
+  })
+
+  review.review()
+  equal(vim.api.nvim_get_current_win(), source_window)
+  local quickfix = vim.fn.getqflist({ id = 0, title = 1, items = 1 })
+  equal(quickfix.title, "AI Proofread")
+  equal(#quickfix.items, 1)
+  vim.cmd("cclose")
+end)
+
 if failures > 0 then
   vim.cmd("cquit " .. failures)
 end
